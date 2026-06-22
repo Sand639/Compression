@@ -302,6 +302,11 @@ struct BitReader {
         if (++bitpos == 8) { bitpos = 0; ++bytepos; }
         return b;
     }
+    uint32_t GetBits(int len) {                     // 上位ビットから len ビット読む
+        uint32_t v = 0;
+        for (int i = 0; i < len; ++i) v = (v << 1) | static_cast<uint32_t>(GetBit());
+        return v;
+    }
 };
 
 // ---- 符号長を 15bit 以下に制限する (JPEG Annex K / zlib 方式) ----
@@ -618,6 +623,7 @@ static bool WriteFileFs(const std::filesystem::path& path, const std::vector<uin
 
 // ---- 圧縮方式フラグ ----
 static const uint8_t ALGO_BWT   = 0x00;   // 既存 BWT パイプライン
+static const uint8_t ALGO_LZSS  = 0x01;   // LZSS (貪欲法) — バイナリ向け
 static const uint8_t ALGO_STORE = 0xFE;   // 無圧縮で格納 (既圧縮ファイル向け)
 
 // アーカイブに格納する 1 ファイル分 (data は「圧縮後」のバイト列)
@@ -648,6 +654,116 @@ static std::filesystem::path Utf8ToPath(const std::string& s) {
     return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 
+// ==========================================================================
+// LZSS (貪欲法 + ハッシュチェーン探索)
+//
+//   出力フォーマット:
+//     [8 byte] originalSize (uint64 LE)  ← Decode を自己完結にするため
+//     [bitstream]
+//        flag 0 : リテラル  -> 8bit のバイト
+//        flag 1 : 一致      -> 距離(15bit, dist-1) + 長さ(8bit, len-3)
+//
+//   ウィンドウ 32KiB、最短一致 3、最長一致 258。最適構文解析は使わず貪欲法。
+//   一致探索はナイーブだと巨大入力で破綻するため、3 バイトハッシュの
+//   チェーンを辿って最長一致を探す (zlib 方式の簡易版)。
+// ==========================================================================
+static const int LZSS_WINDOW_BITS = 15;
+static const int LZSS_WINDOW      = 1 << LZSS_WINDOW_BITS;  // 32768
+static const int LZSS_MIN_MATCH   = 3;
+static const int LZSS_MAX_MATCH   = 258;
+static const int LZSS_LEN_BITS    = 8;                      // 258-3 = 255 -> 8bit
+static const int LZSS_HASH_BITS   = 16;
+static const int LZSS_HASH_SIZE   = 1 << LZSS_HASH_BITS;
+static const int LZSS_MAX_CHAIN   = 4096;                   // 貪欲探索の最大チェーン長
+
+static inline uint32_t LzssHash(const uint8_t* p) {
+    uint32_t v = static_cast<uint32_t>(p[0])
+               | (static_cast<uint32_t>(p[1]) << 8)
+               | (static_cast<uint32_t>(p[2]) << 16);
+    return (v * 2654435761u) >> (32 - LZSS_HASH_BITS);
+}
+
+std::vector<uint8_t> Encode_LZSS_Greedy(const std::vector<uint8_t>& input) {
+    const int n = static_cast<int>(input.size());
+    std::vector<uint8_t> out;
+    PutU64(out, static_cast<uint64_t>(n));     // 先頭に元サイズ
+
+    BitWriter bw(out);
+    if (n == 0) { bw.Flush(); return out; }
+
+    const uint8_t* d = input.data();
+    std::vector<int> head(LZSS_HASH_SIZE, -1);
+    std::vector<int> prev(n, -1);
+
+    auto insert = [&](int p) {
+        if (p + LZSS_MIN_MATCH > n) return;    // ハッシュに 3 バイト必要
+        uint32_t h = LzssHash(d + p);
+        prev[p] = head[h];
+        head[h] = p;
+    };
+
+    int pos = 0;
+    while (pos < n) {
+        int bestLen = 0, bestDist = 0;
+        int maxLen = std::min(LZSS_MAX_MATCH, n - pos);
+
+        if (maxLen >= LZSS_MIN_MATCH) {
+            int minPos = std::max(0, pos - LZSS_WINDOW);
+            int cand = head[LzssHash(d + pos)];
+            int chain = LZSS_MAX_CHAIN;
+            while (cand >= minPos && chain-- > 0) {
+                // 既知最長より先のバイトが一致しなければスキップ (高速化)
+                if (d[cand + bestLen] == d[pos + bestLen]) {
+                    int l = 0;
+                    while (l < maxLen && d[cand + l] == d[pos + l]) ++l;
+                    if (l > bestLen) {
+                        bestLen = l;
+                        bestDist = pos - cand;
+                        if (l >= maxLen) break;     // これ以上は伸びない
+                    }
+                }
+                cand = prev[cand];
+            }
+        }
+
+        if (bestLen >= LZSS_MIN_MATCH) {
+            bw.PutBit(1);
+            bw.PutBits(static_cast<uint32_t>(bestDist - 1), LZSS_WINDOW_BITS);
+            bw.PutBits(static_cast<uint32_t>(bestLen - LZSS_MIN_MATCH), LZSS_LEN_BITS);
+            int end = pos + bestLen;
+            while (pos < end) { insert(pos); ++pos; }   // 一致内の各位置も辞書登録
+        } else {
+            bw.PutBit(0);
+            bw.PutBits(d[pos], 8);
+            insert(pos);
+            ++pos;
+        }
+    }
+    bw.Flush();
+    return out;
+}
+
+std::vector<uint8_t> Decode_LZSS(const std::vector<uint8_t>& input) {
+    if (input.size() < 8) return {};
+    uint64_t n = GetU64(input.data());
+
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(n));
+    BitReader br(input.data() + 8, input.size() - 8);
+
+    while (out.size() < n) {
+        if (br.GetBit() == 0) {
+            out.push_back(static_cast<uint8_t>(br.GetBits(8)));
+        } else {
+            uint32_t dist = br.GetBits(LZSS_WINDOW_BITS) + 1;
+            uint32_t len  = br.GetBits(LZSS_LEN_BITS) + LZSS_MIN_MATCH;
+            size_t start = out.size() - dist;
+            for (uint32_t k = 0; k < len; ++k) out.push_back(out[start + k]);  // 重なり対応
+        }
+    }
+    return out;
+}
+
 // ---- 拡張子から圧縮方式を決定するルーティング ----
 //   今回は仮ルーティング。LZSS 等の新エンジン追加時にここを拡張する。
 static uint8_t RouteByExtension(const std::string& name) {
@@ -668,6 +784,13 @@ static uint8_t RouteByExtension(const std::string& name) {
     for (const char* e : kStoreExt)
         if (ext == e) return ALGO_STORE;
 
+    // 実行ファイル・バイナリは LZSS
+    static const char* kLzssExt[] = {
+        ".exe", ".dll", ".bin", ".so", ".dylib", ".o", ".obj", ".lib", ".sys"
+    };
+    for (const char* e : kLzssExt)
+        if (ext == e) return ALGO_LZSS;
+
     // それ以外は既存 BWT パイプライン
     return ALGO_BWT;
 }
@@ -675,8 +798,9 @@ static uint8_t RouteByExtension(const std::string& name) {
 // ---- 方式に応じた 1 ファイルの圧縮 / 復元 ----
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
     switch (algo) {
-        case ALGO_STORE: return in;                  // そのまま
-        case ALGO_BWT:   return Pipeline_Encode(in); // 既存 4 段パイプライン
+        case ALGO_STORE: return in;                       // そのまま
+        case ALGO_BWT:   return Pipeline_Encode(in);      // 既存 4 段パイプライン
+        case ALGO_LZSS:  return Encode_LZSS_Greedy(in);   // LZSS 貪欲法
         default:         return in;
     }
 }
@@ -685,6 +809,7 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
     switch (algo) {
         case ALGO_STORE: return in;
         case ALGO_BWT:   return Pipeline_Decode(in);
+        case ALGO_LZSS:  return Decode_LZSS(in);
         default:         return in;
     }
 }
@@ -750,6 +875,7 @@ namespace fs = std::filesystem;
 static const char* AlgoName(uint8_t algo) {
     switch (algo) {
         case ALGO_BWT:   return "BWT";
+        case ALGO_LZSS:  return "LZSS";
         case ALGO_STORE: return "Store";
         default:         return "?";
     }
@@ -886,6 +1012,7 @@ static bool RunSelfTests() {
     all &= RunSuite("MTF",                  Encode_MTF,      Decode_MTF);
     all &= RunSuite("RLE",                  Encode_RLE,      Decode_RLE);
     all &= RunSuite("Huffman",              Encode_Huffman,  Decode_Huffman);
+    all &= RunSuite("LZSS",                 Encode_LZSS_Greedy, Decode_LZSS);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 
     // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在
@@ -958,10 +1085,30 @@ static void PrepareDummyData(const fs::path& dir) {
         WriteFileFs(dir / "pack.zip",    v);
     }
 
-    // 6) 実画像があれば取り込む (TEST/pika.bmp -> data/pika.bmp, BWT ルート)
+    // 6) LZSS ルート確認用: 反復の多いバイナリ (.exe)
+    {
+        std::vector<uint8_t> v;
+        std::mt19937 rng(99);
+        std::uniform_int_distribution<int> byte(0, 255);
+        const char* phrase = "MZ_program_text_section_data_";
+        for (int i = 0; i < 4000; ++i) {
+            for (const char* q = phrase; *q; ++q) v.push_back(static_cast<uint8_t>(*q));
+            if (i % 9 == 0)                              // たまにノイズを混ぜる
+                for (int r = 0; r < 16; ++r) v.push_back(static_cast<uint8_t>(byte(rng)));
+        }
+        WriteFileFs(dir / "dummy.exe", v);
+    }
+
+    // 7) 実画像があれば取り込む (TEST/pika.bmp -> BWT ルート)
     for (const char* cand : {"TEST/pika.bmp", "TEST/pika256.bmp"}) {
         fs::path src(cand);
         if (fs::exists(src)) { fs::copy_file(src, dir / src.filename(), fs::copy_options::overwrite_existing, ec); break; }
+    }
+
+    // 8) 実 exe があれば取り込む (data/ は読むだけ、LZSS ルートの実データ検証)
+    {
+        fs::path src("data/TeraPad.exe");
+        if (fs::exists(src)) fs::copy_file(src, dir / "TeraPad_copy.exe", fs::copy_options::overwrite_existing, ec);
     }
 }
 

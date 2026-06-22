@@ -630,9 +630,14 @@ static bool WriteFileFs(const std::filesystem::path& path, const std::vector<uin
 // ==========================================================================
 
 // ---- 圧縮方式フラグ ----
-static const uint8_t ALGO_BWT   = 0x00;   // 既存 BWT パイプライン
-static const uint8_t ALGO_LZSS  = 0x01;   // LZSS (貪欲法) — バイナリ向け
-static const uint8_t ALGO_STORE = 0xFE;   // 無圧縮で格納 (既圧縮ファイル向け)
+static const uint8_t ALGO_BWT    = 0x00;   // BWT パイプライン
+static const uint8_t ALGO_LZSS   = 0x01;   // LZSS 最適構文解析 -> Huffman
+static const uint8_t ALGO_DELTA1 = 0x02;   // Delta(stride=1) -> LZSS -> Huffman
+static const uint8_t ALGO_DELTA2 = 0x03;   // Delta(stride=2) -> LZSS -> Huffman
+static const uint8_t ALGO_DELTA3 = 0x04;   // Delta(stride=3) -> LZSS -> Huffman
+static const uint8_t ALGO_DELTA4 = 0x05;   // Delta(stride=4) -> LZSS -> Huffman
+static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
+// 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
 // アーカイブに格納する 1 ファイル分 (data は「圧縮後」のバイト列)
 struct StoredFile {
@@ -921,44 +926,47 @@ std::vector<uint8_t> Encode_LZSS_Optimal(const std::vector<uint8_t>& input) {
     return best;
 }
 
-// ---- 拡張子から圧縮方式を決定するルーティング ----
-//   今回は仮ルーティング。LZSS 等の新エンジン追加時にここを拡張する。
-static uint8_t RouteByExtension(const std::string& name) {
-    // 拡張子を小文字で取り出す
-    size_t dot = name.find_last_of('.');
-    std::string ext;
-    if (dot != std::string::npos) {
-        ext = name.substr(dot);
-        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+// ==========================================================================
+// デルタフィルタ (stride バイト前との差分)
+//
+//   stride を変えることで様々なデータ並びに対応する:
+//     stride=1: 隣接バイト          (汎用)
+//     stride=2: 16bit サンプル/ピクセル
+//     stride=3: 24bit RGB ピクセル
+//     stride=4: 32bit                (RGBA / 16bit ステレオ)
+//   uint8_t の自然なラップアラウンドで完全可逆。
+//     encode: out[i] = in[i] - in[i-stride]   (i<stride では in[i-stride]=0)
+//     decode: out[i] = in[i] + out[i-stride]
+// ==========================================================================
+std::vector<uint8_t> Encode_Delta(const std::vector<uint8_t>& in, int stride) {
+    const size_t n = in.size();
+    std::vector<uint8_t> out(n);
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t prev = (i >= static_cast<size_t>(stride)) ? in[i - stride] : 0;
+        out[i] = static_cast<uint8_t>(in[i] - prev);
     }
-
-    // 既に圧縮済みの形式は Store (再圧縮しても縮まないため)
-    static const char* kStoreExt[] = {
-        ".png", ".jpg", ".jpeg", ".gif",
-        ".zip", ".7z", ".gz", ".rar", ".bz2", ".xz",
-        ".mp3", ".mp4", ".avi", ".mkv", ".webp"
-    };
-    for (const char* e : kStoreExt)
-        if (ext == e) return ALGO_STORE;
-
-    // 実行ファイル・バイナリは LZSS
-    static const char* kLzssExt[] = {
-        ".exe", ".dll", ".bin", ".so", ".dylib", ".o", ".obj", ".lib", ".sys"
-    };
-    for (const char* e : kLzssExt)
-        if (ext == e) return ALGO_LZSS;
-
-    // それ以外は既存 BWT パイプライン
-    return ALGO_BWT;
+    return out;
+}
+std::vector<uint8_t> Decode_Delta(const std::vector<uint8_t>& in, int stride) {
+    const size_t n = in.size();
+    std::vector<uint8_t> out(n);
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t prev = (i >= static_cast<size_t>(stride)) ? out[i - stride] : 0;
+        out[i] = static_cast<uint8_t>(in[i] + prev);
+    }
+    return out;
 }
 
 // ---- 方式に応じた 1 ファイルの圧縮 / 復元 ----
+//   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
     switch (algo) {
-        case ALGO_STORE: return in;                       // そのまま
-        case ALGO_BWT:   return Pipeline_Encode(in);      // 既存 4 段パイプライン
-        // Step 3-A/3-B: 最適構文解析 LZSS の出力をハフマンで圧縮
+        case ALGO_STORE: return in;                        // そのまま
+        case ALGO_BWT:   return Pipeline_Encode(in);       // BWT 4 段
         case ALGO_LZSS:  return Encode_Huffman(Encode_LZSS_Optimal(in));
+        case ALGO_DELTA1: case ALGO_DELTA2:
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // Delta(stride) -> LZSS -> Huffman
+            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Delta(in, algo - ALGO_LZSS)));
         default:         return in;
     }
 }
@@ -967,11 +975,18 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
     switch (algo) {
         case ALGO_STORE: return in;
         case ALGO_BWT:   return Pipeline_Decode(in);
-        // Step 3-A: ハフマン復号 -> LZSS 復号 の順
         case ALGO_LZSS:  return Decode_LZSS(Decode_Huffman(in));
+        case ALGO_DELTA1: case ALGO_DELTA2:
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // 逆順: Huffman -> LZSS -> Delta
+            return Decode_Delta(Decode_LZSS(Decode_Huffman(in)), algo - ALGO_LZSS);
         default:         return in;
     }
 }
+
+// トーナメントで試す方式一覧
+static const uint8_t kTournamentAlgos[] = {
+    ALGO_STORE, ALGO_BWT, ALGO_LZSS, ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4
+};
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files) {
@@ -1033,14 +1048,38 @@ namespace fs = std::filesystem;
 
 static const char* AlgoName(uint8_t algo) {
     switch (algo) {
-        case ALGO_BWT:   return "BWT";
-        case ALGO_LZSS:  return "LZSS";
-        case ALGO_STORE: return "Store";
-        default:         return "?";
+        case ALGO_BWT:    return "BWT";
+        case ALGO_LZSS:   return "LZSS";
+        case ALGO_DELTA1: return "Delta1+LZSS";
+        case ALGO_DELTA2: return "Delta2+LZSS";
+        case ALGO_DELTA3: return "Delta3+LZSS";
+        case ALGO_DELTA4: return "Delta4+LZSS";
+        case ALGO_STORE:  return "Store";
+        default:          return "?";
     }
 }
 
-// 入力フォルダを再帰スキャン -> ファイルごとに方式選択して個別圧縮 -> 1 ファイル出力
+// 1 ファイルに対し全方式を試し、最小サイズの方式を採用する (トーナメント)
+static StoredFile CompressFileTournament(const std::string& name,
+                                         const std::vector<uint8_t>& raw) {
+    StoredFile best;
+    best.name = name;
+    best.originalSize = raw.size();
+    best.algo = ALGO_STORE;
+    best.data = raw;                       // Store を初期ベスト (膨張しない保証)
+
+    for (uint8_t algo : kTournamentAlgos) {
+        if (algo == ALGO_STORE) continue;  // Store は初期値で済み
+        std::vector<uint8_t> blob = CompressOne(algo, raw);
+        if (blob.size() < best.data.size()) {
+            best.data = std::move(blob);
+            best.algo = algo;
+        }
+    }
+    return best;
+}
+
+// 入力フォルダを再帰スキャン -> 各ファイルをトーナメントで圧縮 -> 1 ファイル出力
 bool CompressFolder(const fs::path& inputDir, const fs::path& outputFile) {
     if (!fs::exists(inputDir) || !fs::is_directory(inputDir)) {
         std::cout << "[ERROR] 入力フォルダがありません: " << inputDir.string() << "\n";
@@ -1058,17 +1097,13 @@ bool CompressFolder(const fs::path& inputDir, const fs::path& outputFile) {
             return false;
         }
 
-        StoredFile e;
-        e.name = PathToUtf8(fs::relative(de.path(), inputDir));   // 相対パスを保存
-        e.algo = RouteByExtension(e.name);
-        e.originalSize = raw.size();
-        e.data = CompressOne(e.algo, raw);
+        std::string name = PathToUtf8(fs::relative(de.path(), inputDir));
+        StoredFile e = CompressFileTournament(name, raw);
         totalOrig += raw.size();
 
-        std::cout << "  [" << AlgoName(e.algo) << "] " << e.name
-                  << "  " << raw.size() << " -> " << e.data.size() << " B"
-                  << (raw.size() ? "  (" + std::to_string(100 * e.data.size() / raw.size()) + "%)" : "")
-                  << "\n";
+        double saved = raw.size() ? 100.0 - 100.0 * e.data.size() / raw.size() : 0.0;
+        std::printf("  %-24s %9zu -> %9zu B  [%-11s] Saved %5.1f%%\n",
+                    name.c_str(), raw.size(), e.data.size(), AlgoName(e.algo), saved);
         files.push_back(std::move(e));
     }
 
@@ -1174,6 +1209,11 @@ static bool RunSelfTests() {
     all &= RunSuite("Huffman",              Encode_Huffman,  Decode_Huffman);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);
+    for (int s = 1; s <= 4; ++s) {
+        all &= RunSuite("Delta stride=" + std::to_string(s),
+                        [s](const std::vector<uint8_t>& v) { return Encode_Delta(v, s); },
+                        [s](const std::vector<uint8_t>& v) { return Decode_Delta(v, s); });
+    }
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 
     // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在
@@ -1271,6 +1311,12 @@ static void PrepareDummyData(const fs::path& dir) {
         fs::path src("data/TeraPad.exe");
         if (fs::exists(src)) fs::copy_file(src, dir / "TeraPad_copy.exe", fs::copy_options::overwrite_existing, ec);
     }
+
+    // 9) 実 WAV/BMP があれば取り込む (Delta+LZSS ルートの実データ検証, data/ は読むだけ)
+    for (const char* f : {"data/explosion.wav", "data/hal.bmp", "data/yuuki_256.bmp"}) {
+        fs::path src(f);
+        if (fs::exists(src)) fs::copy_file(src, dir / src.filename(), fs::copy_options::overwrite_existing, ec);
+    }
 }
 
 // ==========================================================================
@@ -1316,23 +1362,32 @@ int main() {
     std::cout << "\n";
 
     // ====================================================================
-    // フォルダのパスはここで変更できます
-    //   注意: PrepareDummyData は inputDir を毎回削除して作り直します。
-    //         コンテスト本番の data/ を壊さないよう、テストは別名フォルダで行います。
+    // 本番データ data/ をトーナメント圧縮 -> data_restored/ へ復元 -> 完全一致検証
+    //   data/ は読み取りのみ (PrepareDummyData は呼ばない)。
     // ====================================================================
-    const fs::path inputDir   = "archive_test";            // 圧縮対象 (テスト用ダミー)
-    const fs::path outputFile = "archive_test.enc";        // 圧縮済み 1 ファイル
-    const fs::path restoreDir = "archive_test_restored";   // 復元先フォルダ
+    const fs::path inputDir   = "data";            // 本番コンテストデータ
+    const fs::path outputFile = "output.enc";      // 圧縮済み 1 ファイル
+    const fs::path restoreDir = "data_restored";   // 復元先フォルダ
     // --------------------------------------------------------------------
 
-    std::cout << "=== archive round-trip test ===\n";
+    std::cout << "=== archive round-trip test (tournament) ===\n";
     std::cout << "cwd        : " << fs::current_path().string() << "\n";
 
-    // ---- 0. ダミーデータを用意 (inputDir=archive_test を再生成。data/ は触らない) ----
-    PrepareDummyData(inputDir);
-
-    // ---- 1. 圧縮: archive_test/ -> archive_test.enc ----
+    // ---- 1. 圧縮: data/ -> output.enc (各ファイル全方式トーナメント) ----
     if (!CompressFolder(inputDir, outputFile)) return 1;
+
+    // 参考: 7z (data.7z) との比較
+    {
+        std::error_code ec;
+        auto enc = fs::file_size(outputFile, ec);
+        const uint64_t kSevenZip = 1640836;   // data.7z の実測サイズ
+        if (!ec) {
+            std::printf("           vs 7z(data.7z)=%llu B : %s (diff %+lld B)\n",
+                        (unsigned long long)kSevenZip,
+                        enc < kSevenZip ? "WIN" : "lose",
+                        (long long)enc - (long long)kSevenZip);
+        }
+    }
 
     // ---- 2. 復元: output.enc -> data_restored/ ----
     {

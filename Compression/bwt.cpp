@@ -571,6 +571,177 @@ static bool WriteFile(const std::string& path, const std::vector<uint8_t>& data)
     return static_cast<bool>(ofs);
 }
 
+// std::filesystem::path 版 (Unicode ファイル名でも安全に開ける)
+static bool ReadFileFs(const std::filesystem::path& path, std::vector<uint8_t>& out) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) return false;
+    ifs.seekg(0, std::ios::end);
+    std::streamoff size = ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+    out.resize(static_cast<size_t>(size));
+    if (size > 0) ifs.read(reinterpret_cast<char*>(out.data()), size);
+    return static_cast<bool>(ifs);
+}
+static bool WriteFileFs(const std::filesystem::path& path, const std::vector<uint8_t>& data) {
+    if (path.has_parent_path()) {
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+    }
+    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+    if (!ofs) return false;
+    if (!data.empty())
+        ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
+    return static_cast<bool>(ofs);
+}
+
+// ==========================================================================
+// 最前段: アーカイブ層 (複数ファイル <-> 1 バッファ)
+//
+//   フォーマット:
+//     [uint32] fileCount
+//     fileCount 回:
+//       [uint32] filenameLength
+//       [bytes]  filename (UTF-8)
+//       [uint64] fileSize
+//       [bytes]  raw file data
+//
+//   圧縮ロジック (Pipeline_*) には一切手を加えず、その入出力にこの層を被せる:
+//     compress  : files -> BuildArchive -> Pipeline_Encode -> output.enc
+//     decompress: output.enc -> Pipeline_Decode -> ParseArchive -> files
+// ==========================================================================
+struct ArchiveEntry {
+    std::string name;                  // UTF-8 の相対パス
+    std::vector<uint8_t> data;
+};
+
+static void PutU64(std::vector<uint8_t>& v, uint64_t x) {
+    for (int i = 0; i < 8; ++i) v.push_back(static_cast<uint8_t>((x >> (8 * i)) & 0xFF));
+}
+static uint64_t GetU64(const uint8_t* p) {
+    uint64_t x = 0;
+    for (int i = 0; i < 8; ++i) x |= static_cast<uint64_t>(p[i]) << (8 * i);
+    return x;
+}
+
+// fs::path <-> UTF-8 文字列 (日本語ファイル名も正しく往復する)
+static std::string PathToUtf8(const std::filesystem::path& p) {
+    std::u8string u8 = p.generic_u8string();
+    return std::string(u8.begin(), u8.end());
+}
+static std::filesystem::path Utf8ToPath(const std::string& s) {
+    return std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
+
+std::vector<uint8_t> BuildArchive(const std::vector<ArchiveEntry>& files) {
+    std::vector<uint8_t> out;
+    PutU32(out, static_cast<uint32_t>(files.size()));
+    for (const auto& f : files) {
+        PutU32(out, static_cast<uint32_t>(f.name.size()));
+        out.insert(out.end(), f.name.begin(), f.name.end());
+        PutU64(out, static_cast<uint64_t>(f.data.size()));
+        out.insert(out.end(), f.data.begin(), f.data.end());
+    }
+    return out;
+}
+
+bool ParseArchive(const std::vector<uint8_t>& buf, std::vector<ArchiveEntry>& out) {
+    out.clear();
+    size_t pos = 0;
+    auto have = [&](size_t k) { return pos + k <= buf.size(); };
+
+    if (!have(4)) return false;
+    uint32_t count = GetU32(&buf[pos]); pos += 4;
+
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!have(4)) return false;
+        uint32_t nlen = GetU32(&buf[pos]); pos += 4;
+        if (!have(nlen)) return false;
+        std::string name(reinterpret_cast<const char*>(&buf[pos]), nlen); pos += nlen;
+        if (!have(8)) return false;
+        uint64_t fsize = GetU64(&buf[pos]); pos += 8;
+        if (!have(static_cast<size_t>(fsize))) return false;
+
+        ArchiveEntry e;
+        e.name = std::move(name);
+        e.data.assign(buf.begin() + pos, buf.begin() + pos + static_cast<size_t>(fsize));
+        pos += static_cast<size_t>(fsize);
+        out.push_back(std::move(e));
+    }
+    return true;
+}
+
+// ==========================================================================
+// フォルダ一括 圧縮 / 復元
+// ==========================================================================
+namespace fs = std::filesystem;
+
+// 入力フォルダを再帰スキャンしてアーカイブ化 -> Pipeline_Encode -> 1 ファイル出力
+bool CompressFolder(const fs::path& inputDir, const fs::path& outputFile) {
+    if (!fs::exists(inputDir) || !fs::is_directory(inputDir)) {
+        std::cout << "[ERROR] 入力フォルダがありません: " << inputDir.string() << "\n";
+        return false;
+    }
+
+    std::vector<ArchiveEntry> files;
+    for (const auto& de : fs::recursive_directory_iterator(inputDir)) {
+        if (!de.is_regular_file()) continue;
+        ArchiveEntry e;
+        e.name = PathToUtf8(fs::relative(de.path(), inputDir));   // 相対パスを保存
+        if (!ReadFileFs(de.path(), e.data)) {
+            std::cout << "[ERROR] 読込失敗: " << de.path().string() << "\n";
+            return false;
+        }
+        files.push_back(std::move(e));
+    }
+
+    std::vector<uint8_t> archive = BuildArchive(files);
+    std::vector<uint8_t> encoded = Pipeline_Encode(archive);
+
+    if (!WriteFileFs(outputFile, encoded)) {
+        std::cout << "[ERROR] 出力書き込み失敗: " << outputFile.string() << "\n";
+        return false;
+    }
+
+    std::cout << "compress : " << files.size() << " files, "
+              << "archive=" << archive.size() << " B -> "
+              << "encoded=" << encoded.size() << " B"
+              << " -> " << outputFile.string() << "\n";
+    if (archive.size() > 0) {
+        double ratio = 100.0 * encoded.size() / archive.size();
+        std::cout << "           ratio = " << ratio << " %\n";
+    }
+    return true;
+}
+
+// 1 ファイル読込 -> Pipeline_Decode -> ParseArchive -> 出力フォルダへ全展開
+bool DecompressArchive(const fs::path& inputFile, const fs::path& outputDir) {
+    std::vector<uint8_t> encoded;
+    if (!ReadFileFs(inputFile, encoded)) {
+        std::cout << "[ERROR] 入力を開けません: " << inputFile.string() << "\n";
+        return false;
+    }
+
+    std::vector<uint8_t> archive = Pipeline_Decode(encoded);
+
+    std::vector<ArchiveEntry> files;
+    if (!ParseArchive(archive, files)) {
+        std::cout << "[ERROR] アーカイブの解析に失敗しました (破損の可能性)\n";
+        return false;
+    }
+
+    for (const auto& f : files) {
+        fs::path outPath = outputDir / Utf8ToPath(f.name);
+        if (!WriteFileFs(outPath, f.data)) {
+            std::cout << "[ERROR] 復元書き込み失敗: " << outPath.string() << "\n";
+            return false;
+        }
+    }
+
+    std::cout << "decompress: " << files.size() << " files -> "
+              << outputDir.string() << "\n";
+    return true;
+}
+
 // ==========================================================================
 // 内蔵セルフテスト (アルゴリズムの正しさ確認)
 // ==========================================================================
@@ -651,10 +822,76 @@ static bool RunSelfTests() {
 }
 
 // ==========================================================================
-// メイン: TEST フォルダ内のファイルを 1 つ指定して 圧縮(変換)→復元→検証
+// テスト用: data/ にダミーファイル群を用意する (存在しない/再生成)
+// ==========================================================================
+static void PrepareDummyData(const fs::path& dir) {
+    std::error_code ec;
+    fs::remove_all(dir, ec);             // 毎回まっさらにして再現性を確保
+    fs::create_directories(dir, ec);
+
+    // 1) テキスト (繰り返しが多く圧縮しやすい)
+    {
+        std::string s;
+        for (int i = 0; i < 2000; ++i)
+            s += "The quick brown fox jumps over the lazy dog. ";
+        WriteFileFs(dir / "lorem.txt", Str(s));
+    }
+    // 2) 短いテキスト
+    WriteFileFs(dir / "hello.txt", Str("Hello, Archive!\nこんにちは、アーカイブ！\n"));
+
+    // 3) バイナリ (ゼロ連 + 擬似乱数を混在)
+    {
+        std::vector<uint8_t> v;
+        std::mt19937 rng(7);
+        std::uniform_int_distribution<int> byte(0, 255);
+        for (int blk = 0; blk < 200; ++blk) {
+            for (int z = 0; z < 50; ++z) v.push_back(0x00);              // ゼロ連
+            for (int r = 0; r < 30; ++r) v.push_back((uint8_t)byte(rng)); // 乱数
+        }
+        WriteFileFs(dir / "binary.dat", v);
+    }
+    // 4) サブフォルダ内のファイル (相対パス保持の検証)
+    WriteFileFs(dir / "sub" / "note.txt", Str("nested file in subfolder\n"));
+
+    // 5) 実画像があれば取り込む (TEST/pika.bmp -> data/pika.bmp)
+    for (const char* cand : {"TEST/pika.bmp", "TEST/pika256.bmp"}) {
+        fs::path src(cand);
+        if (fs::exists(src)) { fs::copy_file(src, dir / src.filename(), fs::copy_options::overwrite_existing, ec); break; }
+    }
+}
+
+// ==========================================================================
+// data/ と data_restored/ を全ファイル完全一致比較
+// ==========================================================================
+static bool VerifyFolders(const fs::path& a, const fs::path& b) {
+    bool all = true;
+    size_t n = 0;
+    for (const auto& de : fs::recursive_directory_iterator(a)) {
+        if (!de.is_regular_file()) continue;
+        ++n;
+        fs::path rel = fs::relative(de.path(), a);
+        fs::path other = b / rel;
+
+        std::vector<uint8_t> da, db;
+        bool ra = ReadFileFs(de.path(), da);
+        bool rb = ReadFileFs(other, db);
+        bool ok = ra && rb && (da == db);
+        all &= ok;
+        std::cout << (ok ? "  [OK]   " : "  [FAIL] ")
+                  << PathToUtf8(rel) << "  (" << da.size() << " B)";
+        if (!rb) std::cout << "  <- 復元先に存在しません";
+        else if (ra && da != db) std::cout << "  <- 内容不一致!!";
+        std::cout << "\n";
+    }
+    std::cout << (all ? "[OK] " : "[FAIL] ") << n << " files matched\n";
+    return all;
+}
+
+// ==========================================================================
+// メイン: data/ を 1 ファイルに圧縮 -> data_restored/ へ復元 -> 完全一致検証
 // ==========================================================================
 int main() {
-    // ---- セルフテスト ----
+    // ---- アルゴリズムのセルフテスト ----
     if (!RunSelfTests()) {
         std::cout << "アルゴリズムのセルフテストに失敗しました。\n";
         return 1;
@@ -662,59 +899,33 @@ int main() {
     std::cout << "\n";
 
     // ====================================================================
-    // ここを書き換えるだけで対象ファイルを変えられます
+    // フォルダのパスはここで変更できます
     // ====================================================================
-    const std::string TEST_DIR = "TEST/";          // テスト用フォルダ
-    std::string filename = "pika256.bmp";          // ← 対象ファイル名
-
-    // 例: "01_まばたき.mp4" / "test_01.fbx" / "悪堕組_企画書.pptx" など
+    const fs::path inputDir   = "data";            // 圧縮対象フォルダ
+    const fs::path outputFile = "output.enc";      // 圧縮済み 1 ファイル
+    const fs::path restoreDir = "data_restored";   // 復元先フォルダ
     // --------------------------------------------------------------------
 
-    std::string inPath   = TEST_DIR + filename;
-    std::string compPath = TEST_DIR + filename + ".enc";       // 変換後データ
-    std::string decPath  = TEST_DIR + filename + ".restored";  // 復元データ
+    std::cout << "=== archive round-trip test ===\n";
+    std::cout << "cwd        : " << fs::current_path().string() << "\n";
 
-    std::cout << "=== file round-trip test ===\n";
-    std::cout << "cwd    : " << std::filesystem::current_path().string() << "\n";
-    std::cout << "target : " << inPath << "\n\n";
+    // ---- 0. ダミーデータを用意 ----
+    PrepareDummyData(inputDir);
 
-    // ---- 1. 読み込み ----
-    std::vector<uint8_t> original;
-    if (!ReadFile(inPath, original)) {
-        std::cout << "[ERROR] ファイルを開けません: " << inPath << "\n"
-                  << "  作業ディレクトリ (cwd) からの相対パスを確認してください。\n"
-                  << "  Visual Studio のデバッグ実行では cwd は通常プロジェクト\n"
-                  << "  フォルダ (bwt.cpp のある場所) になります。\n";
-        return 1;
+    // ---- 1. 圧縮: data/ -> output.enc ----
+    if (!CompressFolder(inputDir, outputFile)) return 1;
+
+    // ---- 2. 復元: output.enc -> data_restored/ ----
+    {
+        std::error_code ec;
+        fs::remove_all(restoreDir, ec);            // 前回の残骸を除去
     }
-    std::cout << "original size : " << original.size() << " bytes\n";
+    if (!DecompressArchive(outputFile, restoreDir)) return 1;
 
-    // ---- 2. エンコード (BWT -> MTF) ----
-    std::vector<uint8_t> encoded = Pipeline_Encode(original);
-    if (!WriteFile(compPath, encoded)) {
-        std::cout << "[ERROR] 書き込み失敗: " << compPath << "\n";
-        return 1;
-    }
-    std::cout << "encoded  size : " << encoded.size() << " bytes  -> " << compPath << "\n";
+    // ---- 3. 完全一致検証 ----
+    std::cout << "verify     :\n";
+    bool ok = VerifyFolders(inputDir, restoreDir);
 
-    // ---- 3. デコード (MTF^-1 -> BWT^-1) ----
-    std::vector<uint8_t> decoded = Pipeline_Decode(encoded);
-    if (!WriteFile(decPath, decoded)) {
-        std::cout << "[ERROR] 書き込み失敗: " << decPath << "\n";
-        return 1;
-    }
-    std::cout << "decoded  size : " << decoded.size() << " bytes  -> " << decPath << "\n\n";
-
-    // ---- 4. 完全一致検証 ----
-    bool ok = (decoded == original);
-    std::cout << "round-trip    : " << (ok ? "[OK] 完全一致" : "[FAIL] 不一致!!") << "\n";
-
-    // ---- 5. サイズ報告 ----
-    //   BWT -> MTF -> RLE -> Huffman の全 4 段による圧縮結果。
-    if (original.size() > 0) {
-        double ratio = 100.0 * encoded.size() / original.size();
-        std::cout << "size ratio    : " << ratio << " %  (BWT+MTF+RLE+Huffman, 全4段)\n";
-    }
-
+    std::cout << "\nround-trip : " << (ok ? "[OK] 全ファイル完全一致" : "[FAIL] 不一致!!") << "\n";
     return ok ? 0 : 1;
 }

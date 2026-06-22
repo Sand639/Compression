@@ -1652,7 +1652,7 @@ static int PngPredict(int f, int a, int b, int c) {
 }
 
 static bool ParseBmp(const std::vector<uint8_t>& in, size_t& dataOffset,
-                     int& bppBytes, size_t& stride, size_t& rows) {
+                     int& bppBytes, size_t& stride, size_t& rows, size_t& width) {
     const size_t n = in.size();
     if (n < 54) return false;
     if (in[0] != 'B' || in[1] != 'M') return false;
@@ -1672,18 +1672,35 @@ static bool ParseBmp(const std::vector<uint8_t>& in, size_t& dataOffset,
     size_t maxRows = (n - off) / st;
     size_t r = std::min(height, maxRows);
     if (r == 0) return false;
-    dataOffset = off; bppBytes = bpp / 8; stride = st; rows = r;
+    dataOffset = off; bppBytes = bpp / 8; stride = st; rows = r; width = static_cast<size_t>(w);
     return true;
+}
+
+// 可逆カラー変換 (BMP の画素並びは B,G,R)。行内の実画素のみ処理 (パディング除外)。
+//   forward : B-=G ; R-=G        (G は不変, 32bit の A も不変)
+//   inverse : B+=G ; R+=G
+static void BmpColorTransform(std::vector<uint8_t>& pix, size_t stride, size_t rows,
+                              size_t width, int bpp, bool forward) {
+    if (bpp < 3) return;                                    // 8bit パレットは対象外
+    for (size_t r = 0; r < rows; ++r) {
+        uint8_t* row = pix.data() + r * stride;
+        for (size_t x = 0; x < width; ++x) {
+            uint8_t* px = row + x * bpp;
+            uint8_t g = px[1];
+            if (forward) { px[0] = static_cast<uint8_t>(px[0] - g); px[2] = static_cast<uint8_t>(px[2] - g); }
+            else         { px[0] = static_cast<uint8_t>(px[0] + g); px[2] = static_cast<uint8_t>(px[2] + g); }
+        }
+    }
 }
 
 std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     std::vector<uint8_t> out;
-    size_t off = 0, stride = 0, rows = 0; int bpp = 0;
+    size_t off = 0, stride = 0, rows = 0, width = 0; int bpp = 0;
 
-    if (!ParseBmp(in, off, bpp, stride, rows)) {
+    if (!ParseBmp(in, off, bpp, stride, rows, width)) {
         PutU32(out, static_cast<uint32_t>(in.size()));
         out.insert(out.end(), in.begin(), in.end());
-        PutU32(out, 0); PutU32(out, 0); PutU32(out, 0); PutU32(out, 0);  // bpp,stride,rows,trailer
+        PutU32(out, 0); PutU32(out, 0); PutU32(out, 0); PutU32(out, 0); PutU32(out, 0);  // bpp,stride,rows,width,trailer
         return out;
     }
 
@@ -1693,10 +1710,15 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     PutU32(out, static_cast<uint32_t>(bpp));
     PutU32(out, static_cast<uint32_t>(stride));
     PutU32(out, static_cast<uint32_t>(rows));
+    PutU32(out, static_cast<uint32_t>(width));
     PutU32(out, static_cast<uint32_t>(in.size() - pixEnd));
     out.insert(out.end(), in.begin() + pixEnd, in.end());                // trailer
 
-    const uint8_t* pix = in.data() + off;
+    // 画素領域をコピーし、2D 予測の直前に可逆カラー変換 (24/32bit のみ)
+    std::vector<uint8_t> pixBuf(in.begin() + off, in.begin() + pixEnd);
+    BmpColorTransform(pixBuf, stride, rows, width, bpp, true);
+    const uint8_t* pix = pixBuf.data();
+
     std::vector<uint8_t> ftypes(rows);
     std::vector<uint8_t> resid(rows * stride);
     std::vector<uint8_t> tmp[5];
@@ -1737,6 +1759,7 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     int bpp = static_cast<int>(rd());
     size_t stride = rd();
     size_t rows = rd();
+    size_t width = rd();
     uint32_t trailerLen = rd();
     std::vector<uint8_t> trailer(in.begin() + pos, in.begin() + pos + trailerLen);
     pos += trailerLen;
@@ -1758,6 +1781,7 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
             row[x] = static_cast<uint8_t>(resid[r * stride + x] + PngPredict(f, a, b, c));
         }
     }
+    BmpColorTransform(pix, stride, rows, width, bpp, false);  // 2D 復元の直後に逆カラー変換
     out.insert(out.end(), pix.begin(), pix.end());
     out.insert(out.end(), trailer.begin(), trailer.end());
     return out;

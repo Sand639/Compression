@@ -851,27 +851,97 @@ std::vector<uint8_t> Decode_RangeCoderO1(const std::vector<uint8_t>& input) {
 }
 
 // ==========================================================================
-// 最終エントロピー段: 0次 / 1次 を両方試し、小さい方を 1 バイトのタグ付きで採用。
-//   出力: [1 byte tag (0=order0, 1=order1)] + 選んだストリーム。
+// Order-2 (2次) 適応レンジコーダー
+//   コンテキスト = 直前 2 バイト (ctx1=2つ前, ctx2=1つ前; 初期 0,0)。
+//   freq[ctx1*256+ctx2][sym] (256x256x256) はヒープに確保 (スタック溢れ回避)。
+//   大きく文脈相関の強いリテラル列/生データで 0次/1次を上回りうる。
+// ==========================================================================
+std::vector<uint8_t> Encode_RangeCoderO2(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> out;
+    PutU64(out, static_cast<uint64_t>(input.size()));
+
+    RangeEncoder rc(out);
+    std::vector<uint16_t> freq(static_cast<size_t>(256) * 256 * 256, 1);  // ~33MB
+    std::vector<uint32_t> total(static_cast<size_t>(256) * 256, 256);
+    const uint32_t INC = 24;
+    int ctx = 0;                                       // (ctx1<<8)|ctx2
+
+    for (uint8_t b : input) {
+        uint16_t* f = &freq[static_cast<size_t>(ctx) * 256];
+        uint32_t cum = 0;
+        for (int i = 0; i < b; ++i) cum += f[i];
+        rc.encode(cum, f[b], total[ctx]);
+        f[b] += static_cast<uint16_t>(INC); total[ctx] += INC;
+        if (total[ctx] >= RC_BOT) {
+            uint32_t t = 0;
+            for (int i = 0; i < 256; ++i) { f[i] = static_cast<uint16_t>((f[i] >> 1) | 1); t += f[i]; }
+            total[ctx] = t;
+        }
+        ctx = ((ctx << 8) | b) & 0xFFFF;               // ctx1=ctx2, ctx2=b
+    }
+    rc.flush();
+    return out;
+}
+
+std::vector<uint8_t> Decode_RangeCoderO2(const std::vector<uint8_t>& input) {
+    if (input.size() < 8) return {};
+    uint64_t n = GetU64(input.data());
+    std::vector<uint8_t> out;
+    if (n == 0) return out;
+    out.reserve(static_cast<size_t>(n));
+
+    RangeDecoder rc(input.data() + 8, input.size() - 8);
+    std::vector<uint16_t> freq(static_cast<size_t>(256) * 256 * 256, 1);
+    std::vector<uint32_t> total(static_cast<size_t>(256) * 256, 256);
+    const uint32_t INC = 24;
+    int ctx = 0;
+
+    for (uint64_t k = 0; k < n; ++k) {
+        uint16_t* f = &freq[static_cast<size_t>(ctx) * 256];
+        uint32_t value = rc.getfreq(total[ctx]);
+        if (value >= total[ctx]) value = total[ctx] - 1;
+        uint32_t cum = 0; int s = 0;
+        while (cum + f[s] <= value) { cum += f[s]; ++s; }
+        rc.decode(cum, f[s]);
+        out.push_back(static_cast<uint8_t>(s));
+        f[s] += static_cast<uint16_t>(INC); total[ctx] += INC;
+        if (total[ctx] >= RC_BOT) {
+            uint32_t t = 0;
+            for (int i = 0; i < 256; ++i) { f[i] = static_cast<uint16_t>((f[i] >> 1) | 1); t += f[i]; }
+            total[ctx] = t;
+        }
+        ctx = ((ctx << 8) | s) & 0xFFFF;
+    }
+    return out;
+}
+
+// ==========================================================================
+// 最終エントロピー段: 0次/1次(/大きい入力は2次) を試し最小を 1 バイトのタグ付きで採用。
+//   tag: 0=order0, 1=order1, 2=order2
 // ==========================================================================
 std::vector<uint8_t> Encode_Entropy(const std::vector<uint8_t>& input) {
-    std::vector<uint8_t> e0 = Encode_RangeCoder(input);
-    std::vector<uint8_t> e1 = Encode_RangeCoderO1(input);
-    std::vector<uint8_t> out;
-    if (e1.size() < e0.size()) {
-        out.push_back(1);
-        out.insert(out.end(), e1.begin(), e1.end());
-    } else {
-        out.push_back(0);
-        out.insert(out.end(), e0.begin(), e0.end());
+    std::vector<uint8_t> best = Encode_RangeCoder(input);
+    uint8_t tag = 0;
+    {
+        std::vector<uint8_t> e1 = Encode_RangeCoderO1(input);
+        if (e1.size() < best.size()) { best = std::move(e1); tag = 1; }
     }
+    if (input.size() >= 65536) {                        // 2次は十分大きい入力でのみ試す
+        std::vector<uint8_t> e2 = Encode_RangeCoderO2(input);
+        if (e2.size() < best.size()) { best = std::move(e2); tag = 2; }
+    }
+    std::vector<uint8_t> out;
+    out.push_back(tag);
+    out.insert(out.end(), best.begin(), best.end());
     return out;
 }
 std::vector<uint8_t> Decode_Entropy(const std::vector<uint8_t>& input) {
     if (input.empty()) return {};
     uint8_t tag = input[0];
     std::vector<uint8_t> rest(input.begin() + 1, input.end());
-    return (tag == 1) ? Decode_RangeCoderO1(rest) : Decode_RangeCoder(rest);
+    if (tag == 2) return Decode_RangeCoderO2(rest);
+    if (tag == 1) return Decode_RangeCoderO1(rest);
+    return Decode_RangeCoder(rest);
 }
 
 // ==========================================================================
@@ -2069,6 +2139,7 @@ static bool RunSelfTests() {
     all &= RunSuite("Huffman",              Encode_Huffman,      Decode_Huffman);
     all &= RunSuite("RangeCoder o0",        Encode_RangeCoder,   Decode_RangeCoder);
     all &= RunSuite("RangeCoder o1",        Encode_RangeCoderO1, Decode_RangeCoderO1);
+    all &= RunSuite("RangeCoder o2",        Encode_RangeCoderO2, Decode_RangeCoderO2);
     all &= RunSuite("Entropy(o0/o1)",       Encode_Entropy,      Decode_Entropy);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);

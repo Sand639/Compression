@@ -638,6 +638,7 @@ static const uint8_t ALGO_DELTA3 = 0x04;   // Delta(stride=3) -> LZSS -> Huffman
 static const uint8_t ALGO_DELTA4 = 0x05;   // Delta(stride=4) -> LZSS -> Huffman
 static const uint8_t ALGO_BCJ    = 0x06;   // BCJ(x86) -> LZSS -> Huffman (.exe 向け)
 static const uint8_t ALGO_WAV    = 0x07;   // WAV(Mid/Side+Delta) -> LZSS -> Huffman
+static const uint8_t ALGO_BMP    = 0x08;   // BMP(2D 予測フィルタ) -> LZSS -> Huffman
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -1107,6 +1108,150 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     return out;
 }
 
+// ==========================================================================
+// BMP 2D 予測フィルタ (PNG 方式: 行ごとに最適フィルタを適応選択)
+//
+//   横方向だけでなく縦方向の相関も使う。各バイトを近傍 a(左) b(上) c(左上) から
+//   予測し残差を出力。フィルタは None/Sub/Up/Average/Paeth から行ごとに最良を選び、
+//   行フィルタ種別 (1 byte/行) を保存する。近傍は復元済みバイト = 原データなので可逆。
+//
+//   出力フォーマット:
+//     [u32 headerLen][header(verbatim, = dataOffset まで)]
+//     [u32 bytesPerPixel][u32 stride][u32 rows]
+//     [u32 trailerLen][trailer(verbatim)]
+//     [rows] filterType  | [rows*stride] residual
+//   BMP として解析できない入力は rows=0 のフォールバック(完全可逆)。
+// ==========================================================================
+static int PngPredict(int f, int a, int b, int c) {
+    switch (f) {
+        case 0: return 0;            // None
+        case 1: return a;            // Sub  (左)
+        case 2: return b;            // Up   (上)
+        case 3: return (a + b) >> 1; // Average
+        default: {                   // Paeth
+            int p = a + b - c;
+            int pa = p - a; if (pa < 0) pa = -pa;
+            int pb = p - b; if (pb < 0) pb = -pb;
+            int pc = p - c; if (pc < 0) pc = -pc;
+            if (pa <= pb && pa <= pc) return a;
+            if (pb <= pc) return b;
+            return c;
+        }
+    }
+}
+
+static bool ParseBmp(const std::vector<uint8_t>& in, size_t& dataOffset,
+                     int& bppBytes, size_t& stride, size_t& rows) {
+    const size_t n = in.size();
+    if (n < 54) return false;
+    if (in[0] != 'B' || in[1] != 'M') return false;
+    uint32_t off    = GetU32(in.data() + 10);
+    uint32_t ihsize = GetU32(in.data() + 14);
+    if (ihsize < 40) return false;                          // BITMAPINFOHEADER 以上のみ
+    int32_t  w   = static_cast<int32_t>(GetU32(in.data() + 18));
+    int32_t  h   = static_cast<int32_t>(GetU32(in.data() + 22));
+    uint16_t bpp = static_cast<uint16_t>(in[28] | (in[29] << 8));
+    uint32_t comp = GetU32(in.data() + 30);
+    if (comp != 0) return false;                            // 非圧縮 (BI_RGB) のみ
+    if (!(bpp == 8 || bpp == 24 || bpp == 32)) return false;
+    if (w <= 0 || h == 0) return false;
+    size_t height = (h < 0) ? static_cast<size_t>(-(int64_t)h) : static_cast<size_t>(h);
+    size_t st = ((static_cast<size_t>(w) * bpp + 31) / 32) * 4;
+    if (off >= n || st == 0) return false;
+    size_t maxRows = (n - off) / st;
+    size_t r = std::min(height, maxRows);
+    if (r == 0) return false;
+    dataOffset = off; bppBytes = bpp / 8; stride = st; rows = r;
+    return true;
+}
+
+std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
+    std::vector<uint8_t> out;
+    size_t off = 0, stride = 0, rows = 0; int bpp = 0;
+
+    if (!ParseBmp(in, off, bpp, stride, rows)) {
+        PutU32(out, static_cast<uint32_t>(in.size()));
+        out.insert(out.end(), in.begin(), in.end());
+        PutU32(out, 0); PutU32(out, 0); PutU32(out, 0); PutU32(out, 0);  // bpp,stride,rows,trailer
+        return out;
+    }
+
+    const size_t pixEnd = off + stride * rows;
+    PutU32(out, static_cast<uint32_t>(off));
+    out.insert(out.end(), in.begin(), in.begin() + off);                 // header
+    PutU32(out, static_cast<uint32_t>(bpp));
+    PutU32(out, static_cast<uint32_t>(stride));
+    PutU32(out, static_cast<uint32_t>(rows));
+    PutU32(out, static_cast<uint32_t>(in.size() - pixEnd));
+    out.insert(out.end(), in.begin() + pixEnd, in.end());                // trailer
+
+    const uint8_t* pix = in.data() + off;
+    std::vector<uint8_t> ftypes(rows);
+    std::vector<uint8_t> resid(rows * stride);
+    std::vector<uint8_t> tmp[5];
+    for (int f = 0; f < 5; ++f) tmp[f].resize(stride);
+
+    for (size_t r = 0; r < rows; ++r) {
+        const uint8_t* row  = pix + r * stride;
+        const uint8_t* prow = (r > 0) ? pix + (r - 1) * stride : nullptr;
+        long bestCost = -1; int bestF = 0;
+        for (int f = 0; f < 5; ++f) {
+            long cost = 0;
+            for (size_t x = 0; x < stride; ++x) {
+                int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
+                int b = prow ? prow[x] : 0;
+                int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
+                uint8_t res = static_cast<uint8_t>(row[x] - PngPredict(f, a, b, c));
+                tmp[f][x] = res;
+                int sv = (res < 128) ? res : res - 256;       // 符号付きとみなした絶対値和
+                cost += (sv < 0) ? -sv : sv;
+            }
+            if (bestCost < 0 || cost < bestCost) { bestCost = cost; bestF = f; }
+        }
+        ftypes[r] = static_cast<uint8_t>(bestF);
+        std::copy(tmp[bestF].begin(), tmp[bestF].end(), resid.begin() + r * stride);
+    }
+    out.insert(out.end(), ftypes.begin(), ftypes.end());
+    out.insert(out.end(), resid.begin(), resid.end());
+    return out;
+}
+
+std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
+    size_t pos = 0;
+    auto rd = [&]() { uint32_t v = GetU32(in.data() + pos); pos += 4; return v; };
+
+    uint32_t headerLen = rd();
+    std::vector<uint8_t> out(in.begin() + pos, in.begin() + pos + headerLen);
+    pos += headerLen;
+    int bpp = static_cast<int>(rd());
+    size_t stride = rd();
+    size_t rows = rd();
+    uint32_t trailerLen = rd();
+    std::vector<uint8_t> trailer(in.begin() + pos, in.begin() + pos + trailerLen);
+    pos += trailerLen;
+
+    if (rows == 0) return out;                                // フォールバック
+
+    const uint8_t* ftypes = in.data() + pos; pos += rows;
+    const uint8_t* resid  = in.data() + pos; pos += rows * stride;
+
+    std::vector<uint8_t> pix(rows * stride);
+    for (size_t r = 0; r < rows; ++r) {
+        int f = ftypes[r];
+        uint8_t* row = pix.data() + r * stride;
+        const uint8_t* prow = (r > 0) ? pix.data() + (r - 1) * stride : nullptr;
+        for (size_t x = 0; x < stride; ++x) {
+            int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
+            int b = prow ? prow[x] : 0;
+            int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
+            row[x] = static_cast<uint8_t>(resid[r * stride + x] + PngPredict(f, a, b, c));
+        }
+    }
+    out.insert(out.end(), pix.begin(), pix.end());
+    out.insert(out.end(), trailer.begin(), trailer.end());
+    return out;
+}
+
 // ---- 方式に応じた 1 ファイルの圧縮 / 復元 ----
 //   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
@@ -1121,6 +1266,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_Huffman(Encode_LZSS_Optimal(Encode_BCJ(in)));
         case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS -> Huffman
             return Encode_Huffman(Encode_LZSS_Optimal(Encode_Wav_MidSide_Delta(in)));
+        case ALGO_BMP:                                        // BMP(2D 予測) -> LZSS -> Huffman
+            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Bmp_2DPredict(in)));
         default:         return in;
     }
 }
@@ -1137,6 +1284,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_BCJ(Decode_LZSS(Decode_Huffman(in)));
         case ALGO_WAV:                                        // 逆順: Huffman -> LZSS -> WAV
             return Decode_Wav_MidSide_Delta(Decode_LZSS(Decode_Huffman(in)));
+        case ALGO_BMP:                                        // 逆順: Huffman -> LZSS -> BMP
+            return Decode_Bmp_2DPredict(Decode_LZSS(Decode_Huffman(in)));
         default:         return in;
     }
 }
@@ -1144,7 +1293,7 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
 // トーナメントで試す方式一覧
 static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
-    ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4, ALGO_BCJ, ALGO_WAV
+    ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4, ALGO_BCJ, ALGO_WAV, ALGO_BMP
 };
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
@@ -1215,6 +1364,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_DELTA4: return "Delta4+LZSS";
         case ALGO_BCJ:    return "BCJ+LZSS";
         case ALGO_WAV:    return "WAV+LZSS";
+        case ALGO_BMP:    return "BMP+LZSS";
         case ALGO_STORE:  return "Store";
         default:          return "?";
     }
@@ -1377,6 +1527,7 @@ static bool RunSelfTests() {
     }
     all &= RunSuite("BCJ",                  Encode_BCJ,          Decode_BCJ);
     all &= RunSuite("WAV mid/side",         Encode_Wav_MidSide_Delta, Decode_Wav_MidSide_Delta);
+    all &= RunSuite("BMP 2D filter",        Encode_Bmp_2DPredict,     Decode_Bmp_2DPredict);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 
     // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在

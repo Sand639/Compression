@@ -1020,10 +1020,11 @@ std::vector<uint8_t> Decode_LZSS(const std::vector<uint8_t>& input) {
 //   各反復で実際に Encode_Huffman を通した実サイズを測り最小を採用
 //   (greedy も候補に含めるので貪欲法より悪化しない)。
 // ==========================================================================
-std::vector<uint8_t> Encode_LZSS_Optimal(const std::vector<uint8_t>& input) {
+// 最適パースを行い、選ばれたトークン列を返す (単一ストリーム版とスプリット版で共用)
+static std::vector<LzTok> LzssParse(const std::vector<uint8_t>& input) {
     const int n = static_cast<int>(input.size());
     const uint8_t* d = input.data();
-    if (n == 0) { std::vector<uint8_t> o; PutU64(o, 0); return o; }
+    if (n == 0) return {};
 
     // ---- 1. 各位置の最長一致 (長さ・距離) を前計算 ----
     std::vector<int> mlen(n, 0), mdist(n, 0);
@@ -1105,18 +1106,118 @@ std::vector<uint8_t> Encode_LZSS_Optimal(const std::vector<uint8_t>& input) {
         if (mlen[pos] >= LZSS_MIN_MATCH) { greedy.push_back({mlen[pos], mdist[pos]}); pos += mlen[pos]; }
         else { greedy.push_back({1, 0}); pos += 1; } } }
 
-    std::vector<uint8_t> best = EmitLZSS(d, n, greedy);
-    size_t bestSize = Encode_Huffman(best).size();
+    std::vector<LzTok> bestToks = greedy;
+    size_t bestSize = Encode_Huffman(EmitLZSS(d, n, greedy)).size();
 
     const int ITERS = 4;
     for (int it = 0; it < ITERS; ++it) {
         std::vector<LzTok> toks = runDP();
         std::vector<uint8_t> bytes = EmitLZSS(d, n, toks);
-        size_t hs = Encode_Huffman(bytes).size();      // 実際の後段ハフマンサイズで評価
-        rebuildPrices(bytes);                           // 次反復用のコスト (move 前に実施)
-        if (hs < bestSize) { bestSize = hs; best = std::move(bytes); }
+        size_t hs = Encode_Huffman(bytes).size();      // 後段サイズの近似で評価
+        rebuildPrices(bytes);                           // 次反復用のコスト
+        if (hs < bestSize) { bestSize = hs; bestToks = std::move(toks); }
     }
-    return best;
+    return bestToks;
+}
+
+// 単一ストリーム版 (従来どおり。Decode_LZSS で復元)
+std::vector<uint8_t> Encode_LZSS_Optimal(const std::vector<uint8_t>& input) {
+    return EmitLZSS(input.data(), static_cast<int>(input.size()), LzssParse(input));
+}
+
+// ==========================================================================
+// LZSS ストリーム分離 (Split Stream)
+//   Stream A: リテラル (生バイト) のみ      -> Order-1 で圧縮 (文脈が強い)
+//   Stream B: フラグ + LEB128(長さ) + LEB128(距離) -> Order-0 で圧縮
+//   出力: [u64 n][u32 compA サイズ][compA][compB]
+// ==========================================================================
+static std::vector<uint8_t> EmitLZSS_Split(const uint8_t* d, int n, const std::vector<LzTok>& toks) {
+    std::vector<uint8_t> A, B;                          // A=リテラル, B=フラグ+メタ
+    size_t ti = 0, pos = 0;
+    while (ti < toks.size()) {
+        size_t cnt = std::min<size_t>(8, toks.size() - ti);
+        uint8_t flag = 0;
+        for (size_t k = 0; k < cnt; ++k) if (toks[ti + k].len != 1) flag |= (1u << (7 - k));
+        B.push_back(flag);
+        for (size_t k = 0; k < cnt; ++k) {
+            const LzTok& t = toks[ti + k];
+            if (t.len == 1) { A.push_back(d[pos]); pos += 1; }
+            else {
+                LzPutLEB(B, static_cast<uint32_t>(t.len - LZSS_MIN_MATCH));
+                LzPutLEB(B, static_cast<uint32_t>(t.dist - 1));
+                pos += static_cast<size_t>(t.len);
+            }
+        }
+        ti += cnt;
+    }
+    std::vector<uint8_t> compA = Encode_RangeCoderO1(A);   // リテラルは 1 次
+    std::vector<uint8_t> compB = Encode_RangeCoder(B);     // メタは 0 次
+
+    std::vector<uint8_t> out;
+    PutU64(out, static_cast<uint64_t>(n));
+    PutU32(out, static_cast<uint32_t>(compA.size()));
+    out.insert(out.end(), compA.begin(), compA.end());
+    out.insert(out.end(), compB.begin(), compB.end());
+    return out;
+}
+
+// 単体テスト用ラッパ (入力 -> スプリット圧縮)
+std::vector<uint8_t> Encode_LZSS_Split(const std::vector<uint8_t>& input) {
+    return EmitLZSS_Split(input.data(), static_cast<int>(input.size()), LzssParse(input));
+}
+
+std::vector<uint8_t> Decode_LZSS_Split(const std::vector<uint8_t>& input) {
+    if (input.size() < 12) return {};
+    size_t pos = 0;
+    uint64_t n = GetU64(input.data() + pos); pos += 8;
+    uint32_t compAsize = GetU32(input.data() + pos); pos += 4;
+    if (pos + compAsize > input.size()) return {};
+    std::vector<uint8_t> compA(input.begin() + pos, input.begin() + pos + compAsize); pos += compAsize;
+    std::vector<uint8_t> compB(input.begin() + pos, input.end());
+
+    std::vector<uint8_t> A = Decode_RangeCoderO1(compA);   // リテラル
+    std::vector<uint8_t> B = Decode_RangeCoder(compB);     // フラグ+メタ
+
+    std::vector<uint8_t> out;
+    if (n == 0) return out;
+    out.reserve(static_cast<size_t>(n));
+    size_t ai = 0, bi = 0;
+    uint8_t flags = 0; int flagsLeft = 0;
+    while (out.size() < n) {
+        if (flagsLeft == 0) { flags = B[bi++]; flagsLeft = 8; }
+        bool isMatch = (flags & 0x80) != 0;
+        flags <<= 1; --flagsLeft;
+        if (!isMatch) {
+            out.push_back(A[ai++]);
+        } else {
+            uint32_t len  = LzGetLEB(B.data(), bi) + LZSS_MIN_MATCH;
+            uint32_t dist = LzGetLEB(B.data(), bi) + 1;
+            size_t start = out.size() - dist;
+            for (uint32_t k = 0; k < len; ++k) out.push_back(out[start + k]);
+        }
+    }
+    return out;
+}
+
+// LZSS 系の最終圧縮: 単一ストリーム(0次/1次) と スプリットを両方試し小さい方を採用。
+//   出力: [1 byte tag] (1=単一ストリーム, 2=スプリット) + データ
+std::vector<uint8_t> CompressLZSS(const std::vector<uint8_t>& filtered) {
+    const int n = static_cast<int>(filtered.size());
+    std::vector<LzTok> toks = LzssParse(filtered);
+    std::vector<uint8_t> single = Encode_Entropy(EmitLZSS(filtered.data(), n, toks));
+    std::vector<uint8_t> split  = EmitLZSS_Split(filtered.data(), n, toks);
+
+    std::vector<uint8_t> out;
+    if (split.size() < single.size()) { out.push_back(2); out.insert(out.end(), split.begin(), split.end()); }
+    else                              { out.push_back(1); out.insert(out.end(), single.begin(), single.end()); }
+    return out;
+}
+std::vector<uint8_t> DecompressLZSS(const std::vector<uint8_t>& in) {
+    if (in.empty()) return {};
+    uint8_t tag = in[0];
+    std::vector<uint8_t> rest(in.begin() + 1, in.end());
+    if (tag == 2) return Decode_LZSS_Split(rest);
+    return Decode_LZSS(Decode_Entropy(rest));            // tag==1
 }
 
 // ==========================================================================
@@ -1460,19 +1561,19 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
 //   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
     switch (algo) {
-        // 最終段は Encode_Entropy (0次/1次レンジコーダーの小さい方)
+        // LZSS 系は CompressLZSS (単一ストリーム/スプリットの小さい方)
         case ALGO_STORE: return in;                        // そのまま
         case ALGO_BWT:   return Pipeline_Encode(in);       // BWT 4 段 (内部で Entropy)
-        case ALGO_LZSS:  return Encode_Entropy(Encode_LZSS_Optimal(in));
+        case ALGO_LZSS:  return CompressLZSS(in);
         case ALGO_DELTA1: case ALGO_DELTA2:
-        case ALGO_DELTA3: case ALGO_DELTA4:                 // Delta(stride) -> LZSS -> Entropy
-            return Encode_Entropy(Encode_LZSS_Optimal(Encode_Delta(in, algo - ALGO_LZSS)));
-        case ALGO_BCJ:                                       // BCJ -> LZSS -> Entropy
-            return Encode_Entropy(Encode_LZSS_Optimal(Encode_BCJ(in)));
-        case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS -> Entropy
-            return Encode_Entropy(Encode_LZSS_Optimal(Encode_Wav_MidSide_Delta(in)));
-        case ALGO_BMP:                                        // BMP(2D 予測) -> LZSS -> Entropy
-            return Encode_Entropy(Encode_LZSS_Optimal(Encode_Bmp_2DPredict(in)));
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // Delta(stride) -> LZSS(split可)
+            return CompressLZSS(Encode_Delta(in, algo - ALGO_LZSS));
+        case ALGO_BCJ:                                       // BCJ -> LZSS(split可)
+            return CompressLZSS(Encode_BCJ(in));
+        case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS(split可)
+            return CompressLZSS(Encode_Wav_MidSide_Delta(in));
+        case ALGO_BMP:                                        // BMP(2D 予測) -> LZSS(split可)
+            return CompressLZSS(Encode_Bmp_2DPredict(in));
         case ALGO_RAW:                                         // 生データ -> Entropy(0次/1次) 直掛け
             return Encode_Entropy(in);
         default:         return in;
@@ -1481,19 +1582,19 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
 static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
                                           uint64_t /*originalSize*/) {
     switch (algo) {
-        // 最終段は Decode_Entropy (タグで 0次/1次を判別)
+        // LZSS 系は DecompressLZSS (タグで単一/スプリットを判別)
         case ALGO_STORE: return in;
         case ALGO_BWT:   return Pipeline_Decode(in);
-        case ALGO_LZSS:  return Decode_LZSS(Decode_Entropy(in));
+        case ALGO_LZSS:  return DecompressLZSS(in);
         case ALGO_DELTA1: case ALGO_DELTA2:
-        case ALGO_DELTA3: case ALGO_DELTA4:                 // 逆順: Entropy -> LZSS -> Delta
-            return Decode_Delta(Decode_LZSS(Decode_Entropy(in)), algo - ALGO_LZSS);
-        case ALGO_BCJ:                                       // 逆順: Entropy -> LZSS -> BCJ
-            return Decode_BCJ(Decode_LZSS(Decode_Entropy(in)));
-        case ALGO_WAV:                                        // 逆順: Entropy -> LZSS -> WAV
-            return Decode_Wav_MidSide_Delta(Decode_LZSS(Decode_Entropy(in)));
-        case ALGO_BMP:                                        // 逆順: Entropy -> LZSS -> BMP
-            return Decode_Bmp_2DPredict(Decode_LZSS(Decode_Entropy(in)));
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // 逆順: LZSS -> Delta
+            return Decode_Delta(DecompressLZSS(in), algo - ALGO_LZSS);
+        case ALGO_BCJ:                                       // 逆順: LZSS -> BCJ
+            return Decode_BCJ(DecompressLZSS(in));
+        case ALGO_WAV:                                        // 逆順: LZSS -> WAV
+            return Decode_Wav_MidSide_Delta(DecompressLZSS(in));
+        case ALGO_BMP:                                        // 逆順: LZSS -> BMP
+            return Decode_Bmp_2DPredict(DecompressLZSS(in));
         case ALGO_RAW:                                         // Entropy 直掛けの逆
             return Decode_Entropy(in);
         default:         return in;
@@ -1735,6 +1836,7 @@ static bool RunSelfTests() {
     all &= RunSuite("Entropy(o0/o1)",       Encode_Entropy,      Decode_Entropy);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);
+    all &= RunSuite("LZSS-split",           Encode_LZSS_Split,   Decode_LZSS_Split);
     for (int s = 1; s <= 4; ++s) {
         all &= RunSuite("Delta stride=" + std::to_string(s),
                         [s](const std::vector<uint8_t>& v) { return Encode_Delta(v, s); },

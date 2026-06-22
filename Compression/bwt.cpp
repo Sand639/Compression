@@ -1304,6 +1304,17 @@ std::vector<uint8_t> Decode_BCJ(const std::vector<uint8_t>& in) { return BcjTran
 //     [frames] midLow | [frames] midHigh | [frames] sideLow | [frames] sideHigh
 //   WAV として解析できない入力は headerLen=全体, frames=0 のフォールバック(完全可逆)。
 // ==========================================================================
+// FLAC 固定予測子 (uint16 ラップ)。p1..p4 = 直前〜4 つ前の値。
+static inline uint16_t WavPredict(int order, uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4) {
+    switch (order) {
+        case 1:  return p1;
+        case 2:  return static_cast<uint16_t>(2 * p1 - p2);
+        case 3:  return static_cast<uint16_t>(3 * p1 - 3 * p2 + p3);
+        case 4:  return static_cast<uint16_t>(4 * p1 - 6 * p2 + 4 * p3 - p4);
+        default: return 0;   // order 0 (予測なし)
+    }
+}
+
 static bool ParseWav(const std::vector<uint8_t>& in, size_t& dataStart, size_t& frames) {
     const size_t n = in.size();
     if (n < 12) return false;
@@ -1343,31 +1354,73 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         PutU32(out, static_cast<uint32_t>(in.size()));
         out.insert(out.end(), in.begin(), in.end());
         PutU32(out, 0);                          // frames
+        out.push_back(0);                        // predFlag (未使用)
         PutU32(out, 0);                          // trailerLen
         return out;
     }
 
     const size_t pcmEnd = dataStart + frames * 4;
-    PutU32(out, static_cast<uint32_t>(dataStart));
-    out.insert(out.end(), in.begin(), in.begin() + dataStart);          // header
-    PutU32(out, static_cast<uint32_t>(frames));
-    PutU32(out, static_cast<uint32_t>(in.size() - pcmEnd));
-    out.insert(out.end(), in.begin() + pcmEnd, in.end());               // trailer
 
-    std::vector<uint8_t> midLo(frames), midHi(frames), sideLo(frames), sideHi(frames);
-    uint16_t prevMid = 0, prevSide = 0;
+    // Mid/Side を構築
+    std::vector<uint16_t> mid(frames), side(frames);
     for (size_t i = 0; i < frames; ++i) {
         const uint8_t* s = in.data() + dataStart + i * 4;
         uint16_t L = static_cast<uint16_t>(s[0] | (s[1] << 8));
         uint16_t R = static_cast<uint16_t>(s[2] | (s[3] << 8));
-        uint16_t side = static_cast<uint16_t>(L - R);
-        uint16_t mid  = static_cast<uint16_t>(R + (side >> 1));
-        uint16_t md = static_cast<uint16_t>(mid  - prevMid);  prevMid  = mid;
-        uint16_t sd = static_cast<uint16_t>(side - prevSide); prevSide = side;
-        midLo[i]  = static_cast<uint8_t>(md);
-        midHi[i]  = static_cast<uint8_t>(md >> 8);
-        sideLo[i] = static_cast<uint8_t>(sd);
-        sideHi[i] = static_cast<uint8_t>(sd >> 8);
+        uint16_t sd = static_cast<uint16_t>(L - R);
+        side[i] = sd;
+        mid[i]  = static_cast<uint16_t>(R + (sd >> 1));
+    }
+
+    // FLAC 固定予測 (0〜4 次)。すべて uint16 ラップで完全可逆。
+    //   0:なし 1:prev 2:2p1-p2 3:3p1-3p2+p3 4:4p1-6p2+4p3-p4
+    auto makeResidual = [&](const std::vector<uint16_t>& v, int order) {
+        std::vector<uint16_t> r(v.size());
+        for (size_t i = 0; i < v.size(); ++i) {
+            uint16_t p1 = (i >= 1) ? v[i - 1] : 0;
+            uint16_t p2 = (i >= 2) ? v[i - 2] : 0;
+            uint16_t p3 = (i >= 3) ? v[i - 3] : 0;
+            uint16_t p4 = (i >= 4) ? v[i - 4] : 0;
+            uint16_t pred = WavPredict(order, p1, p2, p3, p4);
+            r[i] = static_cast<uint16_t>(v[i] - pred);
+        }
+        return r;
+    };
+    auto cost = [&](const std::vector<uint16_t>& r) {
+        long c = 0;
+        for (uint16_t x : r) { int sv = (x < 32768) ? x : static_cast<int>(x) - 65536; c += (sv < 0 ? -sv : sv); }
+        return c;
+    };
+    // チャンネルごとに 0〜4 次を試し、残差絶対値和が最小の次数を採用
+    auto pickOrder = [&](const std::vector<uint16_t>& v, std::vector<uint16_t>& bestR) {
+        int bestOrd = 0; long bestC = -1;
+        for (int o = 0; o <= 4; ++o) {
+            std::vector<uint16_t> r = makeResidual(v, o);
+            long c = cost(r);
+            if (bestC < 0 || c < bestC) { bestC = c; bestOrd = o; bestR = std::move(r); }
+        }
+        return bestOrd;
+    };
+    std::vector<uint16_t> midR, sideR;
+    int midOrder  = pickOrder(mid,  midR);
+    int sideOrder = pickOrder(side, sideR);
+    uint8_t predFlag = static_cast<uint8_t>((midOrder & 0x0F) | (sideOrder << 4));
+
+    // ヘッダ出力
+    PutU32(out, static_cast<uint32_t>(dataStart));
+    out.insert(out.end(), in.begin(), in.begin() + dataStart);          // header
+    PutU32(out, static_cast<uint32_t>(frames));
+    out.push_back(predFlag);                                            // 予測次数フラグ
+    PutU32(out, static_cast<uint32_t>(in.size() - pcmEnd));
+    out.insert(out.end(), in.begin() + pcmEnd, in.end());               // trailer
+
+    // バイトプレーン分離
+    std::vector<uint8_t> midLo(frames), midHi(frames), sideLo(frames), sideHi(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        midLo[i]  = static_cast<uint8_t>(midR[i]);
+        midHi[i]  = static_cast<uint8_t>(midR[i] >> 8);
+        sideLo[i] = static_cast<uint8_t>(sideR[i]);
+        sideHi[i] = static_cast<uint8_t>(sideR[i] >> 8);
     }
     out.insert(out.end(), midLo.begin(),  midLo.end());
     out.insert(out.end(), midHi.begin(),  midHi.end());
@@ -1384,6 +1437,7 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     std::vector<uint8_t> out(in.begin() + pos, in.begin() + pos + headerLen);  // header
     pos += headerLen;
     uint32_t frames     = rdU32();
+    uint8_t  predFlag   = in[pos++];             // 予測次数フラグ
     uint32_t trailerLen = rdU32();
     std::vector<uint8_t> trailer(in.begin() + pos, in.begin() + pos + trailerLen);
     pos += trailerLen;
@@ -1395,15 +1449,26 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     const uint8_t* sideLo = midHi  + frames;
     const uint8_t* sideHi = sideLo + frames;
 
-    out.reserve(static_cast<size_t>(headerLen) + frames * 4 + trailerLen);
-    uint16_t prevMid = 0, prevSide = 0;
+    int midOrder  = predFlag & 0x0F;
+    int sideOrder = (predFlag >> 4) & 0x0F;
+
+    // 残差から各チャンネル値を逆予測で復元 (FLAC 固定予測 0〜4 次)
+    std::vector<uint16_t> mid(frames), side(frames);
     for (uint32_t i = 0; i < frames; ++i) {
-        uint16_t md = static_cast<uint16_t>(midLo[i]  | (midHi[i]  << 8));
-        uint16_t sd = static_cast<uint16_t>(sideLo[i] | (sideHi[i] << 8));
-        uint16_t mid  = static_cast<uint16_t>(prevMid  + md); prevMid  = mid;
-        uint16_t side = static_cast<uint16_t>(prevSide + sd); prevSide = side;
-        uint16_t R = static_cast<uint16_t>(mid - (side >> 1));
-        uint16_t L = static_cast<uint16_t>(side + R);
+        uint16_t mr = static_cast<uint16_t>(midLo[i]  | (midHi[i]  << 8));
+        uint16_t sr = static_cast<uint16_t>(sideLo[i] | (sideHi[i] << 8));
+        uint16_t mp1 = (i >= 1) ? mid[i - 1] : 0, mp2 = (i >= 2) ? mid[i - 2] : 0;
+        uint16_t mp3 = (i >= 3) ? mid[i - 3] : 0, mp4 = (i >= 4) ? mid[i - 4] : 0;
+        uint16_t sp1 = (i >= 1) ? side[i - 1] : 0, sp2 = (i >= 2) ? side[i - 2] : 0;
+        uint16_t sp3 = (i >= 3) ? side[i - 3] : 0, sp4 = (i >= 4) ? side[i - 4] : 0;
+        mid[i]  = static_cast<uint16_t>(mr + WavPredict(midOrder,  mp1, mp2, mp3, mp4));
+        side[i] = static_cast<uint16_t>(sr + WavPredict(sideOrder, sp1, sp2, sp3, sp4));
+    }
+
+    out.reserve(static_cast<size_t>(headerLen) + frames * 4 + trailerLen);
+    for (uint32_t i = 0; i < frames; ++i) {
+        uint16_t R = static_cast<uint16_t>(mid[i] - (side[i] >> 1));
+        uint16_t L = static_cast<uint16_t>(side[i] + R);
         out.push_back(static_cast<uint8_t>(L));
         out.push_back(static_cast<uint8_t>(L >> 8));
         out.push_back(static_cast<uint8_t>(R));

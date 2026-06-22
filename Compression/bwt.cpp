@@ -1495,7 +1495,7 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         PutU32(out, static_cast<uint32_t>(in.size()));
         out.insert(out.end(), in.begin(), in.end());
         PutU32(out, 0);                          // frames
-        out.push_back(0);                        // predFlag (未使用)
+        PutU32(out, 0);                          // blockSize (未使用)
         PutU32(out, 0);                          // trailerLen
         return out;
     }
@@ -1513,55 +1513,59 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         mid[i]  = static_cast<uint16_t>(R + (sd >> 1));
     }
 
-    // FLAC 固定予測 (0〜4 次)。すべて uint16 ラップで完全可逆。
-    //   0:なし 1:prev 2:2p1-p2 3:3p1-3p2+p3 4:4p1-6p2+4p3-p4
-    auto makeResidual = [&](const std::vector<uint16_t>& v, int order) {
-        std::vector<uint16_t> r(v.size());
-        for (size_t i = 0; i < v.size(); ++i) {
-            uint16_t p1 = (i >= 1) ? v[i - 1] : 0;
-            uint16_t p2 = (i >= 2) ? v[i - 2] : 0;
-            uint16_t p3 = (i >= 3) ? v[i - 3] : 0;
-            uint16_t p4 = (i >= 4) ? v[i - 4] : 0;
-            uint16_t pred = WavPredict(order, p1, p2, p3, p4);
-            r[i] = static_cast<uint16_t>(v[i] - pred);
-        }
-        return r;
-    };
-    auto cost = [&](const std::vector<uint16_t>& r) {
+    // ブロック別 (連続履歴) の FLAC 固定予測 (0〜4 次)。すべて uint16 ラップで可逆。
+    const size_t BS = 4096;                              // フレーム/ブロック
+    const size_t numBlocks = (frames + BS - 1) / BS;
+
+    // [lo,hi) ブロックで order の残差絶対値和を計算 (履歴は連続 = 全域参照)
+    auto blockCost = [&](const std::vector<uint16_t>& v, size_t lo, size_t hi, int order) {
         long c = 0;
-        for (uint16_t x : r) { int sv = (x < 32768) ? x : static_cast<int>(x) - 65536; c += (sv < 0 ? -sv : sv); }
+        for (size_t i = lo; i < hi; ++i) {
+            uint16_t p1 = (i >= 1) ? v[i - 1] : 0, p2 = (i >= 2) ? v[i - 2] : 0;
+            uint16_t p3 = (i >= 3) ? v[i - 3] : 0, p4 = (i >= 4) ? v[i - 4] : 0;
+            uint16_t r = static_cast<uint16_t>(v[i] - WavPredict(order, p1, p2, p3, p4));
+            int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
+            c += (sv < 0) ? -sv : sv;
+        }
         return c;
     };
-    // チャンネルごとに 0〜4 次を試し、残差絶対値和が最小の次数を採用
-    auto pickOrder = [&](const std::vector<uint16_t>& v, std::vector<uint16_t>& bestR) {
-        int bestOrd = 0; long bestC = -1;
-        for (int o = 0; o <= 4; ++o) {
-            std::vector<uint16_t> r = makeResidual(v, o);
-            long c = cost(r);
-            if (bestC < 0 || c < bestC) { bestC = c; bestOrd = o; bestR = std::move(r); }
-        }
-        return bestOrd;
+    auto pickBlockOrder = [&](const std::vector<uint16_t>& v, size_t lo, size_t hi) {
+        int bo = 0; long bc = -1;
+        for (int o = 0; o <= 4; ++o) { long c = blockCost(v, lo, hi, o); if (bc < 0 || c < bc) { bc = c; bo = o; } }
+        return bo;
     };
-    std::vector<uint16_t> midR, sideR;
-    int midOrder  = pickOrder(mid,  midR);
-    int sideOrder = pickOrder(side, sideR);
-    uint8_t predFlag = static_cast<uint8_t>((midOrder & 0x0F) | (sideOrder << 4));
 
-    // ヘッダ出力
+    // ブロックごとに mid/side の最適次数を決定 (低 nibble=mid, 高 nibble=side)
+    std::vector<uint8_t> blockOrders(numBlocks);
+    for (size_t b = 0; b < numBlocks; ++b) {
+        size_t lo = b * BS, hi = std::min(frames, (b + 1) * BS);
+        int mo = pickBlockOrder(mid, lo, hi);
+        int so = pickBlockOrder(side, lo, hi);
+        blockOrders[b] = static_cast<uint8_t>((mo & 0x0F) | (so << 4));
+    }
+
+    // ヘッダ出力 (predFlag を blockSize に置換し、後段にブロック次数配列を格納)
     PutU32(out, static_cast<uint32_t>(dataStart));
     out.insert(out.end(), in.begin(), in.begin() + dataStart);          // header
     PutU32(out, static_cast<uint32_t>(frames));
-    out.push_back(predFlag);                                            // 予測次数フラグ
+    PutU32(out, static_cast<uint32_t>(BS));                             // blockSize
     PutU32(out, static_cast<uint32_t>(in.size() - pcmEnd));
     out.insert(out.end(), in.begin() + pcmEnd, in.end());               // trailer
+    out.insert(out.end(), blockOrders.begin(), blockOrders.end());      // ブロック次数配列
 
-    // バイトプレーン分離
+    // 各フレームを所属ブロックの次数で予測 -> バイトプレーン分離 (履歴は連続)
     std::vector<uint8_t> midLo(frames), midHi(frames), sideLo(frames), sideHi(frames);
     for (size_t i = 0; i < frames; ++i) {
-        midLo[i]  = static_cast<uint8_t>(midR[i]);
-        midHi[i]  = static_cast<uint8_t>(midR[i] >> 8);
-        sideLo[i] = static_cast<uint8_t>(sideR[i]);
-        sideHi[i] = static_cast<uint8_t>(sideR[i] >> 8);
+        int bo = blockOrders[i / BS];
+        int mo = bo & 0x0F, so = (bo >> 4) & 0x0F;
+        uint16_t mp1 = (i >= 1) ? mid[i - 1] : 0, mp2 = (i >= 2) ? mid[i - 2] : 0;
+        uint16_t mp3 = (i >= 3) ? mid[i - 3] : 0, mp4 = (i >= 4) ? mid[i - 4] : 0;
+        uint16_t sp1 = (i >= 1) ? side[i - 1] : 0, sp2 = (i >= 2) ? side[i - 2] : 0;
+        uint16_t sp3 = (i >= 3) ? side[i - 3] : 0, sp4 = (i >= 4) ? side[i - 4] : 0;
+        uint16_t mr = static_cast<uint16_t>(mid[i]  - WavPredict(mo, mp1, mp2, mp3, mp4));
+        uint16_t sr = static_cast<uint16_t>(side[i] - WavPredict(so, sp1, sp2, sp3, sp4));
+        midLo[i]  = static_cast<uint8_t>(mr);       midHi[i]  = static_cast<uint8_t>(mr >> 8);
+        sideLo[i] = static_cast<uint8_t>(sr);       sideHi[i] = static_cast<uint8_t>(sr >> 8);
     }
     out.insert(out.end(), midLo.begin(),  midLo.end());
     out.insert(out.end(), midHi.begin(),  midHi.end());
@@ -1578,24 +1582,26 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     std::vector<uint8_t> out(in.begin() + pos, in.begin() + pos + headerLen);  // header
     pos += headerLen;
     uint32_t frames     = rdU32();
-    uint8_t  predFlag   = in[pos++];             // 予測次数フラグ
+    uint32_t blockSize  = rdU32();               // フレーム/ブロック
     uint32_t trailerLen = rdU32();
     std::vector<uint8_t> trailer(in.begin() + pos, in.begin() + pos + trailerLen);
     pos += trailerLen;
 
     if (frames == 0) return out;                 // フォールバック (out == 元データ全体)
 
+    const size_t numBlocks = (frames + blockSize - 1) / blockSize;
+    const uint8_t* blockOrders = in.data() + pos; pos += numBlocks;   // ブロック次数配列
+
     const uint8_t* midLo  = in.data() + pos;
     const uint8_t* midHi  = midLo  + frames;
     const uint8_t* sideLo = midHi  + frames;
     const uint8_t* sideHi = sideLo + frames;
 
-    int midOrder  = predFlag & 0x0F;
-    int sideOrder = (predFlag >> 4) & 0x0F;
-
-    // 残差から各チャンネル値を逆予測で復元 (FLAC 固定予測 0〜4 次)
+    // 残差から各チャンネル値を逆予測で復元 (ブロックごとに次数切替, 履歴は連続)
     std::vector<uint16_t> mid(frames), side(frames);
     for (uint32_t i = 0; i < frames; ++i) {
+        int bo = blockOrders[i / blockSize];
+        int midOrder = bo & 0x0F, sideOrder = (bo >> 4) & 0x0F;
         uint16_t mr = static_cast<uint16_t>(midLo[i]  | (midHi[i]  << 8));
         uint16_t sr = static_cast<uint16_t>(sideLo[i] | (sideHi[i] << 8));
         uint16_t mp1 = (i >= 1) ? mid[i - 1] : 0, mp2 = (i >= 2) ? mid[i - 2] : 0;

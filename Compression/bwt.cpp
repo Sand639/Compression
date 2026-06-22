@@ -184,17 +184,90 @@ std::vector<uint8_t> Decode_MTF(const std::vector<uint8_t>& input) {
 }
 
 // ==========================================================================
+// 第3段: Zero-Run 特化 RLE
+//
+//   MTF 後のデータは 0x00 が大量に連続する。これに特化し、
+//     - 0x00 を「ゼロ連 marker」として予約 (MTF 後はリテラルに 0 が出ないため衝突しない)
+//     - marker 直後に連長 N を LEB128 (可変長整数) で格納
+//     - 非ゼロバイトはそのまま通過
+//   とする。長いゼロ連ほど対数オーダーに圧縮される (例: 0x00 が 1000 個 -> 3 バイト)。
+//   バイト列で完全可逆。
+//
+//   注: 単体テストでは「リテラルの 0x00」も連長 1 のゼロ連として扱われるため、
+//       任意のバイト列に対して可逆性が保たれる (短い孤立ゼロは一時的に膨らむが、
+//       実データである BWT+MTF 出力では長いゼロ連が支配的で大きく縮む)。
+// ==========================================================================
+std::vector<uint8_t> Encode_RLE(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> output;
+    output.reserve(input.size());
+
+    const size_t n = input.size();
+    size_t i = 0;
+    while (i < n) {
+        if (input[i] == 0x00) {
+            // ゼロ連の長さを数える
+            size_t j = i;
+            while (j < n && input[j] == 0x00) ++j;
+            uint64_t run = static_cast<uint64_t>(j - i);   // >= 1
+
+            output.push_back(0x00);                        // ゼロ連 marker
+            // 連長を LEB128 で格納
+            while (true) {
+                uint8_t b = static_cast<uint8_t>(run & 0x7F);
+                run >>= 7;
+                if (run) b |= 0x80;                        // 継続ビット
+                output.push_back(b);
+                if (!run) break;
+            }
+            i = j;
+        } else {
+            output.push_back(input[i]);
+            ++i;
+        }
+    }
+    return output;
+}
+
+std::vector<uint8_t> Decode_RLE(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> output;
+    output.reserve(input.size());
+
+    const size_t n = input.size();
+    size_t i = 0;
+    while (i < n) {
+        uint8_t b = input[i++];
+        if (b == 0x00) {
+            // LEB128 で連長を復元
+            uint64_t run = 0;
+            int shift = 0;
+            uint8_t x;
+            do {
+                x = input[i++];
+                run |= static_cast<uint64_t>(x & 0x7F) << shift;
+                shift += 7;
+            } while (x & 0x80);
+            output.insert(output.end(), static_cast<size_t>(run), 0x00);
+        } else {
+            output.push_back(b);
+        }
+    }
+    return output;
+}
+
+// ==========================================================================
 // ここまでの圧縮パイプライン (段を増やすたびにここへ追加していく)
-//   encode:  original ->[BWT]->[MTF]-> encoded
-//   decode:  encoded  ->[MTF^-1]->[BWT^-1]-> restored
+//   encode:  original ->[BWT]->[MTF]->[RLE]-> encoded
+//   decode:  encoded  ->[RLE^-1]->[MTF^-1]->[BWT^-1]-> restored
 // ==========================================================================
 std::vector<uint8_t> Pipeline_Encode(const std::vector<uint8_t>& input) {
     std::vector<uint8_t> x = Encode_BWT(input);
     x = Encode_MTF(x);
+    x = Encode_RLE(x);
     return x;
 }
 std::vector<uint8_t> Pipeline_Decode(const std::vector<uint8_t>& input) {
-    std::vector<uint8_t> x = Decode_MTF(input);
+    std::vector<uint8_t> x = Decode_RLE(input);
+    x = Decode_MTF(x);
     x = Decode_BWT(x);
     return x;
 }
@@ -266,9 +339,10 @@ static bool RunSuite(const std::string& title, Enc enc, Dec dec) {
 static bool RunSelfTests() {
     std::cout << "=== self tests ===\n";
     bool all = true;
-    all &= RunSuite("BWT",          Encode_BWT,      Decode_BWT);
-    all &= RunSuite("MTF",          Encode_MTF,      Decode_MTF);
-    all &= RunSuite("BWT+MTF pipe", Pipeline_Encode, Pipeline_Decode);
+    all &= RunSuite("BWT",              Encode_BWT,      Decode_BWT);
+    all &= RunSuite("MTF",              Encode_MTF,      Decode_MTF);
+    all &= RunSuite("RLE",              Encode_RLE,      Decode_RLE);
+    all &= RunSuite("BWT+MTF+RLE pipe", Pipeline_Encode, Pipeline_Decode);
     std::cout << (all ? "self tests PASSED\n" : "self tests FAILED\n");
     return all;
 }
@@ -333,11 +407,11 @@ int main() {
     std::cout << "round-trip    : " << (ok ? "[OK] 完全一致" : "[FAIL] 不一致!!") << "\n";
 
     // ---- 5. サイズ報告 ----
-    // 注意: BWT/MTF はどちらも「変換」なのでサイズはほぼ不変 (+4 byte) です。
-    //       実際の圧縮は この後 RLE -> Huffman を重ねた段階で効いてきます。
+    //   RLE (ゼロ連圧縮) が入り、ここで初めてサイズが縮み得る。
+    //   最終的なエントロピー圧縮は次段 Huffman でさらに効く。
     if (original.size() > 0) {
         double ratio = 100.0 * encoded.size() / original.size();
-        std::cout << "size ratio    : " << ratio << " %  (BWT+MTF 単体では圧縮されません)\n";
+        std::cout << "size ratio    : " << ratio << " %  (BWT+MTF+RLE)\n";
     }
 
     return ok ? 0 : 1;

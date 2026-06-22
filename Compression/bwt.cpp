@@ -1,4 +1,4 @@
-﻿// bwt.cpp
+// bwt.cpp
 // 第1段: Burrows-Wheeler Transform (BWT / ブロックソート)
 //
 // 方式:
@@ -910,7 +910,7 @@ int main() {
     std::cout << "cwd        : " << fs::current_path().string() << "\n";
 
     // ---- 0. ダミーデータを用意 ----
-    PrepareDummyData(inputDir);
+    //PrepareDummyData(inputDir);
 
     // ---- 1. 圧縮: data/ -> output.enc ----
     if (!CompressFolder(inputDir, outputFile)) return 1;

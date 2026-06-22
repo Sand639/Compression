@@ -1727,6 +1727,33 @@ static int PngPredict(int f, int a, int b, int c) {
     }
 }
 
+// GAP (Gradient Adaptive Predictor, CALIC 系)。周辺画素 (同一チャンネル, bpp ストライド)
+// W/WW/N/NW/NE/NN の勾配から適応的に予測。近傍は復元済み = 原データなので可逆。
+// 返り値は int (mod 256 で残差化されるので範囲制限は不要)。
+static int GapPredict(const uint8_t* row, const uint8_t* prow, const uint8_t* prow2,
+                      size_t x, size_t stride, int bpp) {
+    auto iabs = [](int v) { return v < 0 ? -v : v; };
+    int W  = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
+    int WW = (x >= static_cast<size_t>(2 * bpp)) ? row[x - 2 * bpp] : W;
+    int N  = prow ? prow[x] : 0;
+    int NW = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : N;
+    int NE = (prow && x + bpp < stride) ? prow[x + bpp] : N;
+    int NN = prow2 ? prow2[x] : N;
+    int dh = iabs(W - WW) + iabs(N - NW) + iabs(N - NE);   // 水平勾配
+    int dv = iabs(W - NW) + iabs(N - NN);                  // 垂直勾配
+    int pred;
+    if (dv - dh > 80) pred = W;
+    else if (dh - dv > 80) pred = N;
+    else {
+        pred = (W + N) / 2 + (NE - NW) / 4;
+        if      (dv - dh > 32) pred = (pred + W) / 2;
+        else if (dh - dv > 32) pred = (pred + N) / 2;
+        else if (dv - dh > 8)  pred = (3 * pred + W) / 4;
+        else if (dh - dv > 8)  pred = (3 * pred + N) / 4;
+    }
+    return pred;
+}
+
 static bool ParseBmp(const std::vector<uint8_t>& in, size_t& dataOffset,
                      int& bppBytes, size_t& stride, size_t& rows, size_t& width) {
     const size_t n = in.size();
@@ -1797,20 +1824,28 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
 
     std::vector<uint8_t> ftypes(rows);
     std::vector<uint8_t> resid(rows * stride);
-    std::vector<uint8_t> tmp[5];
-    for (int f = 0; f < 5; ++f) tmp[f].resize(stride);
+    const int NUM_FILT = 6;                          // 0-4: PNG, 5: GAP
+    std::vector<uint8_t> tmp[NUM_FILT];
+    for (int f = 0; f < NUM_FILT; ++f) tmp[f].resize(stride);
 
     for (size_t r = 0; r < rows; ++r) {
-        const uint8_t* row  = pix + r * stride;
-        const uint8_t* prow = (r > 0) ? pix + (r - 1) * stride : nullptr;
+        const uint8_t* row   = pix + r * stride;
+        const uint8_t* prow  = (r > 0) ? pix + (r - 1) * stride : nullptr;
+        const uint8_t* prow2 = (r > 1) ? pix + (r - 2) * stride : nullptr;
         long bestCost = -1; int bestF = 0;
-        for (int f = 0; f < 5; ++f) {
+        for (int f = 0; f < NUM_FILT; ++f) {
             long cost = 0;
             for (size_t x = 0; x < stride; ++x) {
-                int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
-                int b = prow ? prow[x] : 0;
-                int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
-                uint8_t res = static_cast<uint8_t>(row[x] - PngPredict(f, a, b, c));
+                int pred;
+                if (f < 5) {
+                    int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
+                    int b = prow ? prow[x] : 0;
+                    int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
+                    pred = PngPredict(f, a, b, c);
+                } else {
+                    pred = GapPredict(row, prow, prow2, x, stride, bpp);
+                }
+                uint8_t res = static_cast<uint8_t>(row[x] - pred);
                 tmp[f][x] = res;
                 int sv = (res < 128) ? res : res - 256;       // 符号付きとみなした絶対値和
                 cost += (sv < 0) ? -sv : sv;
@@ -1849,12 +1884,19 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     for (size_t r = 0; r < rows; ++r) {
         int f = ftypes[r];
         uint8_t* row = pix.data() + r * stride;
-        const uint8_t* prow = (r > 0) ? pix.data() + (r - 1) * stride : nullptr;
+        const uint8_t* prow  = (r > 0) ? pix.data() + (r - 1) * stride : nullptr;
+        const uint8_t* prow2 = (r > 1) ? pix.data() + (r - 2) * stride : nullptr;
         for (size_t x = 0; x < stride; ++x) {
-            int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
-            int b = prow ? prow[x] : 0;
-            int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
-            row[x] = static_cast<uint8_t>(resid[r * stride + x] + PngPredict(f, a, b, c));
+            int pred;
+            if (f < 5) {
+                int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
+                int b = prow ? prow[x] : 0;
+                int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
+                pred = PngPredict(f, a, b, c);
+            } else {
+                pred = GapPredict(row, prow, prow2, x, stride, bpp);
+            }
+            row[x] = static_cast<uint8_t>(resid[r * stride + x] + pred);
         }
     }
     BmpColorTransform(pix, stride, rows, width, bpp, false);  // 2D 復元の直後に逆カラー変換

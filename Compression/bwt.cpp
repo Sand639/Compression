@@ -637,6 +637,7 @@ static const uint8_t ALGO_DELTA2 = 0x03;   // Delta(stride=2) -> LZSS -> Huffman
 static const uint8_t ALGO_DELTA3 = 0x04;   // Delta(stride=3) -> LZSS -> Huffman
 static const uint8_t ALGO_DELTA4 = 0x05;   // Delta(stride=4) -> LZSS -> Huffman
 static const uint8_t ALGO_BCJ    = 0x06;   // BCJ(x86) -> LZSS -> Huffman (.exe 向け)
+static const uint8_t ALGO_WAV    = 0x07;   // WAV(Mid/Side+Delta) -> LZSS -> Huffman
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -978,6 +979,134 @@ static std::vector<uint8_t> BcjTransform(const std::vector<uint8_t>& in, bool en
 std::vector<uint8_t> Encode_BCJ(const std::vector<uint8_t>& in) { return BcjTransform(in, true); }
 std::vector<uint8_t> Decode_BCJ(const std::vector<uint8_t>& in) { return BcjTransform(in, false); }
 
+// ==========================================================================
+// WAV (FLAC 方式: Mid/Side + 16bit Delta + バイトプレーン分離)
+//
+//   16bit/2ch ステレオ PCM 前提。L/R の相関を Mid/Side で除去し、各チャンネルに
+//   16bit 差分をかけ、上位/下位バイトを別プレーンにまとめる。相関の強い音源では
+//   Side と上位バイトがほぼゼロになり、後段 LZSS+Huffman が劇的に効く。
+//
+//   可逆 Mid/Side (リフティング, すべて uint16):
+//     enc: side = L - R ;  mid = R + (side>>1)
+//     dec: R = mid - (side>>1) ;  L = side + R
+//   16bit Delta も uint16 のラップアラウンドで完全可逆。
+//
+//   出力フォーマット:
+//     [u32 headerLen][header(verbatim)]
+//     [u32 frames]
+//     [u32 trailerLen][trailer(verbatim)]
+//     [frames] midLow | [frames] midHigh | [frames] sideLow | [frames] sideHigh
+//   WAV として解析できない入力は headerLen=全体, frames=0 のフォールバック(完全可逆)。
+// ==========================================================================
+static bool ParseWav(const std::vector<uint8_t>& in, size_t& dataStart, size_t& frames) {
+    const size_t n = in.size();
+    if (n < 12) return false;
+    if (std::memcmp(in.data(), "RIFF", 4) != 0) return false;
+    if (std::memcmp(in.data() + 8, "WAVE", 4) != 0) return false;
+
+    size_t pos = 12;
+    bool fmtOk = false;
+    uint16_t fmt = 0, ch = 0, bits = 0;
+    while (pos + 8 <= n) {
+        const uint8_t* p = in.data() + pos;
+        uint32_t csize = GetU32(p + 4);
+        size_t payload = pos + 8;
+        if (std::memcmp(p, "fmt ", 4) == 0 && csize >= 16 && payload + 16 <= n) {
+            fmt  = static_cast<uint16_t>(in[payload]      | (in[payload + 1]  << 8));
+            ch   = static_cast<uint16_t>(in[payload + 2]  | (in[payload + 3]  << 8));
+            bits = static_cast<uint16_t>(in[payload + 14] | (in[payload + 15] << 8));
+            fmtOk = true;
+        } else if (std::memcmp(p, "data", 4) == 0) {
+            if (!fmtOk || fmt != 1 || ch != 2 || bits != 16) return false;
+            size_t dsize = std::min(static_cast<size_t>(csize), n - payload);
+            dataStart = payload;
+            frames = dsize / 4;                 // 4 bytes/frame (16bit x 2ch)
+            return frames > 0;
+        }
+        pos = payload + csize + (csize & 1);     // 偶数パディング
+    }
+    return false;
+}
+
+std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
+    std::vector<uint8_t> out;
+    size_t dataStart = 0, frames = 0;
+
+    if (!ParseWav(in, dataStart, frames)) {
+        // フォールバック: 全体を header として格納 (完全可逆)
+        PutU32(out, static_cast<uint32_t>(in.size()));
+        out.insert(out.end(), in.begin(), in.end());
+        PutU32(out, 0);                          // frames
+        PutU32(out, 0);                          // trailerLen
+        return out;
+    }
+
+    const size_t pcmEnd = dataStart + frames * 4;
+    PutU32(out, static_cast<uint32_t>(dataStart));
+    out.insert(out.end(), in.begin(), in.begin() + dataStart);          // header
+    PutU32(out, static_cast<uint32_t>(frames));
+    PutU32(out, static_cast<uint32_t>(in.size() - pcmEnd));
+    out.insert(out.end(), in.begin() + pcmEnd, in.end());               // trailer
+
+    std::vector<uint8_t> midLo(frames), midHi(frames), sideLo(frames), sideHi(frames);
+    uint16_t prevMid = 0, prevSide = 0;
+    for (size_t i = 0; i < frames; ++i) {
+        const uint8_t* s = in.data() + dataStart + i * 4;
+        uint16_t L = static_cast<uint16_t>(s[0] | (s[1] << 8));
+        uint16_t R = static_cast<uint16_t>(s[2] | (s[3] << 8));
+        uint16_t side = static_cast<uint16_t>(L - R);
+        uint16_t mid  = static_cast<uint16_t>(R + (side >> 1));
+        uint16_t md = static_cast<uint16_t>(mid  - prevMid);  prevMid  = mid;
+        uint16_t sd = static_cast<uint16_t>(side - prevSide); prevSide = side;
+        midLo[i]  = static_cast<uint8_t>(md);
+        midHi[i]  = static_cast<uint8_t>(md >> 8);
+        sideLo[i] = static_cast<uint8_t>(sd);
+        sideHi[i] = static_cast<uint8_t>(sd >> 8);
+    }
+    out.insert(out.end(), midLo.begin(),  midLo.end());
+    out.insert(out.end(), midHi.begin(),  midHi.end());
+    out.insert(out.end(), sideLo.begin(), sideLo.end());
+    out.insert(out.end(), sideHi.begin(), sideHi.end());
+    return out;
+}
+
+std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
+    size_t pos = 0;
+    auto rdU32 = [&]() { uint32_t v = GetU32(in.data() + pos); pos += 4; return v; };
+
+    uint32_t headerLen = rdU32();
+    std::vector<uint8_t> out(in.begin() + pos, in.begin() + pos + headerLen);  // header
+    pos += headerLen;
+    uint32_t frames     = rdU32();
+    uint32_t trailerLen = rdU32();
+    std::vector<uint8_t> trailer(in.begin() + pos, in.begin() + pos + trailerLen);
+    pos += trailerLen;
+
+    if (frames == 0) return out;                 // フォールバック (out == 元データ全体)
+
+    const uint8_t* midLo  = in.data() + pos;
+    const uint8_t* midHi  = midLo  + frames;
+    const uint8_t* sideLo = midHi  + frames;
+    const uint8_t* sideHi = sideLo + frames;
+
+    out.reserve(static_cast<size_t>(headerLen) + frames * 4 + trailerLen);
+    uint16_t prevMid = 0, prevSide = 0;
+    for (uint32_t i = 0; i < frames; ++i) {
+        uint16_t md = static_cast<uint16_t>(midLo[i]  | (midHi[i]  << 8));
+        uint16_t sd = static_cast<uint16_t>(sideLo[i] | (sideHi[i] << 8));
+        uint16_t mid  = static_cast<uint16_t>(prevMid  + md); prevMid  = mid;
+        uint16_t side = static_cast<uint16_t>(prevSide + sd); prevSide = side;
+        uint16_t R = static_cast<uint16_t>(mid - (side >> 1));
+        uint16_t L = static_cast<uint16_t>(side + R);
+        out.push_back(static_cast<uint8_t>(L));
+        out.push_back(static_cast<uint8_t>(L >> 8));
+        out.push_back(static_cast<uint8_t>(R));
+        out.push_back(static_cast<uint8_t>(R >> 8));
+    }
+    out.insert(out.end(), trailer.begin(), trailer.end());
+    return out;
+}
+
 // ---- 方式に応じた 1 ファイルの圧縮 / 復元 ----
 //   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
@@ -990,6 +1119,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_Huffman(Encode_LZSS_Optimal(Encode_Delta(in, algo - ALGO_LZSS)));
         case ALGO_BCJ:                                       // BCJ -> LZSS -> Huffman
             return Encode_Huffman(Encode_LZSS_Optimal(Encode_BCJ(in)));
+        case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS -> Huffman
+            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Wav_MidSide_Delta(in)));
         default:         return in;
     }
 }
@@ -1004,6 +1135,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Delta(Decode_LZSS(Decode_Huffman(in)), algo - ALGO_LZSS);
         case ALGO_BCJ:                                       // 逆順: Huffman -> LZSS -> BCJ
             return Decode_BCJ(Decode_LZSS(Decode_Huffman(in)));
+        case ALGO_WAV:                                        // 逆順: Huffman -> LZSS -> WAV
+            return Decode_Wav_MidSide_Delta(Decode_LZSS(Decode_Huffman(in)));
         default:         return in;
     }
 }
@@ -1011,7 +1144,7 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
 // トーナメントで試す方式一覧
 static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
-    ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4, ALGO_BCJ
+    ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4, ALGO_BCJ, ALGO_WAV
 };
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
@@ -1081,6 +1214,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_DELTA3: return "Delta3+LZSS";
         case ALGO_DELTA4: return "Delta4+LZSS";
         case ALGO_BCJ:    return "BCJ+LZSS";
+        case ALGO_WAV:    return "WAV+LZSS";
         case ALGO_STORE:  return "Store";
         default:          return "?";
     }
@@ -1242,6 +1376,7 @@ static bool RunSelfTests() {
                         [s](const std::vector<uint8_t>& v) { return Decode_Delta(v, s); });
     }
     all &= RunSuite("BCJ",                  Encode_BCJ,          Decode_BCJ);
+    all &= RunSuite("WAV mid/side",         Encode_Wav_MidSide_Delta, Decode_Wav_MidSide_Delta);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 
     // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在

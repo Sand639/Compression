@@ -469,23 +469,84 @@ std::vector<uint8_t> Decode_Huffman(const std::vector<uint8_t>& input) {
 }
 
 // ==========================================================================
-// ここまでの圧縮パイプライン (段を増やすたびにここへ追加していく)
-//   encode:  original ->[BWT]->[MTF]->[RLE]->[Huffman]-> encoded
-//   decode:  encoded  ->[Huffman^-1]->[RLE^-1]->[MTF^-1]->[BWT^-1]-> restored
+// 1 ブロック分の 4 段パイプライン
+//   encode:  block ->[BWT]->[MTF]->[RLE]->[Huffman]-> chunk
+//   decode:  chunk ->[Huffman^-1]->[RLE^-1]->[MTF^-1]->[BWT^-1]-> block
+// chunk は内部 (BWT/Huffman) ヘッダにより自身の復元サイズを完全自己記述する。
 // ==========================================================================
-std::vector<uint8_t> Pipeline_Encode(const std::vector<uint8_t>& input) {
-    std::vector<uint8_t> x = Encode_BWT(input);
+static std::vector<uint8_t> EncodeBlock(const std::vector<uint8_t>& block) {
+    std::vector<uint8_t> x = Encode_BWT(block);
     x = Encode_MTF(x);
     x = Encode_RLE(x);
     x = Encode_Huffman(x);
     return x;
 }
-std::vector<uint8_t> Pipeline_Decode(const std::vector<uint8_t>& input) {
-    std::vector<uint8_t> x = Decode_Huffman(input);
+static std::vector<uint8_t> DecodeBlock(const std::vector<uint8_t>& chunk) {
+    std::vector<uint8_t> x = Decode_Huffman(chunk);
     x = Decode_RLE(x);
     x = Decode_MTF(x);
     x = Decode_BWT(x);
     return x;
+}
+
+// ==========================================================================
+// ブロック分割パイプライン (最大 900KiB / ブロック)
+//
+//   コンテナ形式:
+//     [uint32 LE] blockCount
+//     各ブロック: [uint32 LE] chunkLen, 続けて chunkLen バイトの chunk
+//
+//   各ブロックは完全に独立して圧縮・復元される。メモリ使用量と速度
+//   (BWT の O(n log^2 n)) をブロック単位に抑え、大容量ファイルでも安定する。
+// ==========================================================================
+static const size_t kBlockSize = 900 * 1024;     // 921600 bytes
+
+static void PutU32(std::vector<uint8_t>& v, uint32_t x) {
+    v.push_back(static_cast<uint8_t>(x & 0xFF));
+    v.push_back(static_cast<uint8_t>((x >> 8) & 0xFF));
+    v.push_back(static_cast<uint8_t>((x >> 16) & 0xFF));
+    v.push_back(static_cast<uint8_t>((x >> 24) & 0xFF));
+}
+static uint32_t GetU32(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0])
+         | (static_cast<uint32_t>(p[1]) << 8)
+         | (static_cast<uint32_t>(p[2]) << 16)
+         | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+std::vector<uint8_t> Pipeline_Encode(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> out;
+    const size_t n = input.size();
+    uint32_t blockCount = static_cast<uint32_t>((n + kBlockSize - 1) / kBlockSize);
+
+    PutU32(out, blockCount);
+    for (size_t off = 0; off < n; off += kBlockSize) {
+        size_t len = std::min(kBlockSize, n - off);
+        std::vector<uint8_t> block(input.begin() + off, input.begin() + off + len);
+        std::vector<uint8_t> chunk = EncodeBlock(block);
+        PutU32(out, static_cast<uint32_t>(chunk.size()));
+        out.insert(out.end(), chunk.begin(), chunk.end());
+    }
+    return out;
+}
+
+std::vector<uint8_t> Pipeline_Decode(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> out;
+    if (input.size() < 4) return out;              // ヘッダ未満
+
+    size_t pos = 0;
+    uint32_t blockCount = GetU32(&input[pos]); pos += 4;
+
+    for (uint32_t b = 0; b < blockCount; ++b) {
+        if (pos + 4 > input.size()) break;         // 防御的境界チェック
+        uint32_t chunkLen = GetU32(&input[pos]); pos += 4;
+        if (pos + chunkLen > input.size()) break;
+        std::vector<uint8_t> chunk(input.begin() + pos, input.begin() + pos + chunkLen);
+        pos += chunkLen;
+        std::vector<uint8_t> block = DecodeBlock(chunk);
+        out.insert(out.end(), block.begin(), block.end());
+    }
+    return out;
 }
 
 // ==========================================================================
@@ -560,6 +621,31 @@ static bool RunSelfTests() {
     all &= RunSuite("RLE",                  Encode_RLE,      Decode_RLE);
     all &= RunSuite("Huffman",              Encode_Huffman,  Decode_Huffman);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
+
+    // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在
+    {
+        std::cout << "--- multi-block pipeline ---\n";
+        std::mt19937 rng(2024);
+        std::uniform_int_distribution<int> byte(0, 255);
+        std::vector<uint8_t> big;
+        big.reserve(2'300'000);
+        while (big.size() < 2'300'000) {
+            // 反復しやすいパターン
+            for (int k = 0; k < 5000; ++k) big.push_back(static_cast<uint8_t>(k & 7));
+            // 乱雑なパターン
+            for (int k = 0; k < 3000; ++k) big.push_back(static_cast<uint8_t>(byte(rng)));
+        }
+        std::vector<uint8_t> enc = Pipeline_Encode(big);
+        std::vector<uint8_t> dec = Pipeline_Decode(enc);
+        uint32_t blocks = (enc.size() >= 4) ? GetU32(enc.data()) : 0;
+        bool ok = (dec == big);
+        std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                  << "multi-block  (size=" << big.size()
+                  << ", blocks=" << blocks
+                  << ", encoded=" << enc.size() << ")\n";
+        all &= ok;
+    }
+
     std::cout << (all ? "self tests PASSED\n" : "self tests FAILED\n");
     return all;
 }

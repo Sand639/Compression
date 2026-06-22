@@ -1199,23 +1199,104 @@ std::vector<uint8_t> Decode_LZSS_Split(const std::vector<uint8_t>& input) {
     return out;
 }
 
-// LZSS 系の最終圧縮: 単一ストリーム(0次/1次) と スプリットを両方試し小さい方を採用。
-//   出力: [1 byte tag] (1=単一ストリーム, 2=スプリット) + データ
+// ==========================================================================
+// LZSS 4 ストリーム分離 (Zstd 風)
+//   A: リテラル (生バイト)      -> Order-1
+//   B: 一致長さ (len-MIN, LEB128) -> Order-0
+//   C: 一致距離 (dist-1, LEB128)  -> Order-0
+//   D: フラグ (1 byte/トークン, 0=リテラル/1=一致) -> Order-0
+//   出力: [u32 sizeA][u32 sizeB][u32 sizeC][u32 sizeD][compA][compB][compC][compD]
+//   復号は D (= トークン数) を辿って再構成するので n ヘッダは不要。
+// ==========================================================================
+static std::vector<uint8_t> EmitLZSS_4Stream(const uint8_t* d, int /*n*/, const std::vector<LzTok>& toks) {
+    std::vector<uint8_t> A, B, C, D;
+    size_t pos = 0;
+    for (const LzTok& t : toks) {
+        if (t.len == 1) { D.push_back(0); A.push_back(d[pos]); pos += 1; }
+        else {
+            D.push_back(1);
+            LzPutLEB(B, static_cast<uint32_t>(t.len - LZSS_MIN_MATCH));
+            LzPutLEB(C, static_cast<uint32_t>(t.dist - 1));
+            pos += static_cast<size_t>(t.len);
+        }
+    }
+    std::vector<uint8_t> cA = Encode_RangeCoderO1(A);   // リテラルは 1 次
+    std::vector<uint8_t> cB = Encode_RangeCoder(B);     // 長さ 0 次
+    std::vector<uint8_t> cC = Encode_RangeCoder(C);     // 距離 0 次
+    std::vector<uint8_t> cD = Encode_RangeCoder(D);     // フラグ 0 次
+
+    std::vector<uint8_t> out;
+    PutU32(out, static_cast<uint32_t>(cA.size()));
+    PutU32(out, static_cast<uint32_t>(cB.size()));
+    PutU32(out, static_cast<uint32_t>(cC.size()));
+    PutU32(out, static_cast<uint32_t>(cD.size()));
+    out.insert(out.end(), cA.begin(), cA.end());
+    out.insert(out.end(), cB.begin(), cB.end());
+    out.insert(out.end(), cC.begin(), cC.end());
+    out.insert(out.end(), cD.begin(), cD.end());
+    return out;
+}
+
+std::vector<uint8_t> Encode_LZSS_4Stream(const std::vector<uint8_t>& input) {
+    return EmitLZSS_4Stream(input.data(), static_cast<int>(input.size()), LzssParse(input));
+}
+
+std::vector<uint8_t> Decode_LZSS_4Stream(const std::vector<uint8_t>& in) {
+    if (in.size() < 16) return {};
+    size_t pos = 0;
+    uint32_t sA = GetU32(in.data() + pos); pos += 4;
+    uint32_t sB = GetU32(in.data() + pos); pos += 4;
+    uint32_t sC = GetU32(in.data() + pos); pos += 4;
+    uint32_t sD = GetU32(in.data() + pos); pos += 4;
+    if (pos + (size_t)sA + sB + sC + sD > in.size()) return {};
+
+    auto slice = [&](uint32_t len) {
+        std::vector<uint8_t> v(in.begin() + pos, in.begin() + pos + len); pos += len; return v;
+    };
+    std::vector<uint8_t> A = Decode_RangeCoderO1(slice(sA));
+    std::vector<uint8_t> B = Decode_RangeCoder(slice(sB));
+    std::vector<uint8_t> C = Decode_RangeCoder(slice(sC));
+    std::vector<uint8_t> D = Decode_RangeCoder(slice(sD));
+
+    std::vector<uint8_t> out;
+    size_t ai = 0, bi = 0, ci = 0;
+    for (uint8_t f : D) {
+        if (f == 0) {
+            out.push_back(A[ai++]);
+        } else {
+            uint32_t len  = LzGetLEB(B.data(), bi) + LZSS_MIN_MATCH;
+            uint32_t dist = LzGetLEB(C.data(), ci) + 1;
+            size_t start = out.size() - dist;
+            for (uint32_t k = 0; k < len; ++k) out.push_back(out[start + k]);
+        }
+    }
+    return out;
+}
+
+// LZSS 系の最終圧縮: 単一(0/1次) / 2分割 / 4分割 を試し最小をタグ付きで採用。
+//   出力: [1 byte tag] (1=単一, 2=2分割, 3=4分割) + データ
 std::vector<uint8_t> CompressLZSS(const std::vector<uint8_t>& filtered) {
     const int n = static_cast<int>(filtered.size());
     std::vector<LzTok> toks = LzssParse(filtered);
     std::vector<uint8_t> single = Encode_Entropy(EmitLZSS(filtered.data(), n, toks));
     std::vector<uint8_t> split  = EmitLZSS_Split(filtered.data(), n, toks);
+    std::vector<uint8_t> quad   = EmitLZSS_4Stream(filtered.data(), n, toks);
+
+    uint8_t tag = 1;
+    std::vector<uint8_t>* best = &single;
+    if (split.size() < best->size()) { best = &split; tag = 2; }
+    if (quad.size()  < best->size()) { best = &quad;  tag = 3; }
 
     std::vector<uint8_t> out;
-    if (split.size() < single.size()) { out.push_back(2); out.insert(out.end(), split.begin(), split.end()); }
-    else                              { out.push_back(1); out.insert(out.end(), single.begin(), single.end()); }
+    out.push_back(tag);
+    out.insert(out.end(), best->begin(), best->end());
     return out;
 }
 std::vector<uint8_t> DecompressLZSS(const std::vector<uint8_t>& in) {
     if (in.empty()) return {};
     uint8_t tag = in[0];
     std::vector<uint8_t> rest(in.begin() + 1, in.end());
+    if (tag == 3) return Decode_LZSS_4Stream(rest);
     if (tag == 2) return Decode_LZSS_Split(rest);
     return Decode_LZSS(Decode_Entropy(rest));            // tag==1
 }
@@ -1902,6 +1983,7 @@ static bool RunSelfTests() {
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);
     all &= RunSuite("LZSS-split",           Encode_LZSS_Split,   Decode_LZSS_Split);
+    all &= RunSuite("LZSS-4stream",         Encode_LZSS_4Stream, Decode_LZSS_4Stream);
     for (int s = 1; s <= 4; ++s) {
         all &= RunSuite("Delta stride=" + std::to_string(s),
                         [s](const std::vector<uint8_t>& v) { return Encode_Delta(v, s); },

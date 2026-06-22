@@ -483,21 +483,25 @@ std::vector<uint8_t> Decode_Huffman(const std::vector<uint8_t>& input) {
     return output;
 }
 
+// 最終段レンジコーダー (定義は後方、ここでは前方宣言。PutU64/GetU64 依存のため)
+std::vector<uint8_t> Encode_RangeCoder(const std::vector<uint8_t>& input);
+std::vector<uint8_t> Decode_RangeCoder(const std::vector<uint8_t>& input);
+
 // ==========================================================================
 // 1 ブロック分の 4 段パイプライン
-//   encode:  block ->[BWT]->[MTF]->[RLE]->[Huffman]-> chunk
-//   decode:  chunk ->[Huffman^-1]->[RLE^-1]->[MTF^-1]->[BWT^-1]-> block
-// chunk は内部 (BWT/Huffman) ヘッダにより自身の復元サイズを完全自己記述する。
+//   encode:  block ->[BWT]->[MTF]->[RLE]->[RangeCoder]-> chunk
+//   decode:  chunk ->[RangeCoder^-1]->[RLE^-1]->[MTF^-1]->[BWT^-1]-> block
+// 最終段はハフマンからレンジコーダーに換装 (旧ハフマン版は下にコメントで保持)。
 // ==========================================================================
 static std::vector<uint8_t> EncodeBlock(const std::vector<uint8_t>& block) {
     std::vector<uint8_t> x = Encode_BWT(block);
     x = Encode_MTF(x);
     x = Encode_RLE(x);
-    x = Encode_Huffman(x);
+    x = Encode_RangeCoder(x);     // 旧: x = Encode_Huffman(x);
     return x;
 }
 static std::vector<uint8_t> DecodeBlock(const std::vector<uint8_t>& chunk) {
-    std::vector<uint8_t> x = Decode_Huffman(chunk);
+    std::vector<uint8_t> x = Decode_RangeCoder(chunk);   // 旧: Decode_Huffman(chunk);
     x = Decode_RLE(x);
     x = Decode_MTF(x);
     x = Decode_BWT(x);
@@ -668,6 +672,110 @@ static std::string PathToUtf8(const std::filesystem::path& p) {
 }
 static std::filesystem::path Utf8ToPath(const std::string& s) {
     return std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
+
+// ==========================================================================
+// 適応型レンジコーダー (Subbotin 方式, 32bit, 0次適応モデル)
+//
+//   最終エントロピー段。ハフマンの「整数ビット境界」「256B の符号長表」の無駄を
+//   なくし、出現確率を動的更新しながらバイト列を符号化する。
+//   正規化: 上位バイトが確定 (low と low+range の最上位が一致) するたび 1 バイト
+//   出力。range が小さくなりすぎたら (アンダーフロー) range=(-low)&(BOT-1) で
+//   桁あふれ(キャリー)を吸収する標準処理。
+//
+//   出力: [8 byte] originalSize(uint64 LE) + レンジ符号化ストリーム。
+// ==========================================================================
+static const uint32_t RC_TOP = 1u << 24;
+static const uint32_t RC_BOT = 1u << 16;
+
+struct RangeEncoder {
+    uint32_t low = 0, range = 0xFFFFFFFFu;
+    std::vector<uint8_t>& out;
+    explicit RangeEncoder(std::vector<uint8_t>& o) : out(o) {}
+    void encode(uint32_t cum, uint32_t freq, uint32_t tot) {
+        range /= tot;
+        low   += cum * range;
+        range *= freq;
+        while ((low ^ (low + range)) < RC_TOP ||
+               (range < RC_BOT && ((range = (0u - low) & (RC_BOT - 1)), true))) {
+            out.push_back(static_cast<uint8_t>(low >> 24));
+            low <<= 8; range <<= 8;
+        }
+    }
+    void flush() { for (int i = 0; i < 4; ++i) { out.push_back(static_cast<uint8_t>(low >> 24)); low <<= 8; } }
+};
+
+struct RangeDecoder {
+    uint32_t low = 0, range = 0xFFFFFFFFu, code = 0;
+    const uint8_t* in; size_t pos = 0, size;
+    RangeDecoder(const uint8_t* d, size_t s) : in(d), size(s) {
+        for (int i = 0; i < 4; ++i) code = (code << 8) | rb();
+    }
+    uint8_t rb() { return pos < size ? in[pos++] : 0; }
+    uint32_t getfreq(uint32_t tot) { range /= tot; return (code - low) / range; }
+    void decode(uint32_t cum, uint32_t freq) {
+        low   += cum * range;
+        range *= freq;
+        while ((low ^ (low + range)) < RC_TOP ||
+               (range < RC_BOT && ((range = (0u - low) & (RC_BOT - 1)), true))) {
+            code = (code << 8) | rb();
+            low <<= 8; range <<= 8;
+        }
+    }
+};
+
+// 0 次適応モデルでバイト列をレンジ符号化 (最終段)
+std::vector<uint8_t> Encode_RangeCoder(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> out;
+    PutU64(out, static_cast<uint64_t>(input.size()));
+
+    RangeEncoder rc(out);
+    uint32_t freq[256];
+    for (int i = 0; i < 256; ++i) freq[i] = 1;
+    uint32_t total = 256;
+    const uint32_t INC = 32;
+
+    for (uint8_t b : input) {
+        uint32_t cum = 0;
+        for (int i = 0; i < b; ++i) cum += freq[i];
+        rc.encode(cum, freq[b], total);
+        freq[b] += INC; total += INC;
+        if (total >= RC_BOT) {                         // 再スケール (合計を BOT 未満に保つ)
+            total = 0;
+            for (int i = 0; i < 256; ++i) { freq[i] = (freq[i] >> 1) | 1; total += freq[i]; }
+        }
+    }
+    rc.flush();
+    return out;
+}
+
+std::vector<uint8_t> Decode_RangeCoder(const std::vector<uint8_t>& input) {
+    if (input.size() < 8) return {};
+    uint64_t n = GetU64(input.data());
+    std::vector<uint8_t> out;
+    if (n == 0) return out;
+    out.reserve(static_cast<size_t>(n));
+
+    RangeDecoder rc(input.data() + 8, input.size() - 8);
+    uint32_t freq[256];
+    for (int i = 0; i < 256; ++i) freq[i] = 1;
+    uint32_t total = 256;
+    const uint32_t INC = 32;
+
+    for (uint64_t k = 0; k < n; ++k) {
+        uint32_t value = rc.getfreq(total);
+        if (value >= total) value = total - 1;
+        uint32_t cum = 0; int s = 0;
+        while (cum + freq[s] <= value) { cum += freq[s]; ++s; }
+        rc.decode(cum, freq[s]);
+        out.push_back(static_cast<uint8_t>(s));
+        freq[s] += INC; total += INC;
+        if (total >= RC_BOT) {
+            total = 0;
+            for (int i = 0; i < 256; ++i) { freq[i] = (freq[i] >> 1) | 1; total += freq[i]; }
+        }
+    }
+    return out;
 }
 
 // ==========================================================================
@@ -1256,36 +1364,38 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
 //   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
     switch (algo) {
+        // 最終段はレンジコーダーに換装 (旧: Encode_Huffman(...))
         case ALGO_STORE: return in;                        // そのまま
-        case ALGO_BWT:   return Pipeline_Encode(in);       // BWT 4 段
-        case ALGO_LZSS:  return Encode_Huffman(Encode_LZSS_Optimal(in));
+        case ALGO_BWT:   return Pipeline_Encode(in);       // BWT 4 段 (内部で RangeCoder)
+        case ALGO_LZSS:  return Encode_RangeCoder(Encode_LZSS_Optimal(in));
         case ALGO_DELTA1: case ALGO_DELTA2:
-        case ALGO_DELTA3: case ALGO_DELTA4:                 // Delta(stride) -> LZSS -> Huffman
-            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Delta(in, algo - ALGO_LZSS)));
-        case ALGO_BCJ:                                       // BCJ -> LZSS -> Huffman
-            return Encode_Huffman(Encode_LZSS_Optimal(Encode_BCJ(in)));
-        case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS -> Huffman
-            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Wav_MidSide_Delta(in)));
-        case ALGO_BMP:                                        // BMP(2D 予測) -> LZSS -> Huffman
-            return Encode_Huffman(Encode_LZSS_Optimal(Encode_Bmp_2DPredict(in)));
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // Delta(stride) -> LZSS -> RangeCoder
+            return Encode_RangeCoder(Encode_LZSS_Optimal(Encode_Delta(in, algo - ALGO_LZSS)));
+        case ALGO_BCJ:                                       // BCJ -> LZSS -> RangeCoder
+            return Encode_RangeCoder(Encode_LZSS_Optimal(Encode_BCJ(in)));
+        case ALGO_WAV:                                        // WAV(Mid/Side+Delta) -> LZSS -> RangeCoder
+            return Encode_RangeCoder(Encode_LZSS_Optimal(Encode_Wav_MidSide_Delta(in)));
+        case ALGO_BMP:                                        // BMP(2D 予測) -> LZSS -> RangeCoder
+            return Encode_RangeCoder(Encode_LZSS_Optimal(Encode_Bmp_2DPredict(in)));
         default:         return in;
     }
 }
 static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
                                           uint64_t /*originalSize*/) {
     switch (algo) {
+        // 最終段はレンジコーダーに換装 (旧: Decode_Huffman(in))
         case ALGO_STORE: return in;
         case ALGO_BWT:   return Pipeline_Decode(in);
-        case ALGO_LZSS:  return Decode_LZSS(Decode_Huffman(in));
+        case ALGO_LZSS:  return Decode_LZSS(Decode_RangeCoder(in));
         case ALGO_DELTA1: case ALGO_DELTA2:
-        case ALGO_DELTA3: case ALGO_DELTA4:                 // 逆順: Huffman -> LZSS -> Delta
-            return Decode_Delta(Decode_LZSS(Decode_Huffman(in)), algo - ALGO_LZSS);
-        case ALGO_BCJ:                                       // 逆順: Huffman -> LZSS -> BCJ
-            return Decode_BCJ(Decode_LZSS(Decode_Huffman(in)));
-        case ALGO_WAV:                                        // 逆順: Huffman -> LZSS -> WAV
-            return Decode_Wav_MidSide_Delta(Decode_LZSS(Decode_Huffman(in)));
-        case ALGO_BMP:                                        // 逆順: Huffman -> LZSS -> BMP
-            return Decode_Bmp_2DPredict(Decode_LZSS(Decode_Huffman(in)));
+        case ALGO_DELTA3: case ALGO_DELTA4:                 // 逆順: RangeCoder -> LZSS -> Delta
+            return Decode_Delta(Decode_LZSS(Decode_RangeCoder(in)), algo - ALGO_LZSS);
+        case ALGO_BCJ:                                       // 逆順: RangeCoder -> LZSS -> BCJ
+            return Decode_BCJ(Decode_LZSS(Decode_RangeCoder(in)));
+        case ALGO_WAV:                                        // 逆順: RangeCoder -> LZSS -> WAV
+            return Decode_Wav_MidSide_Delta(Decode_LZSS(Decode_RangeCoder(in)));
+        case ALGO_BMP:                                        // 逆順: RangeCoder -> LZSS -> BMP
+            return Decode_Bmp_2DPredict(Decode_LZSS(Decode_RangeCoder(in)));
         default:         return in;
     }
 }
@@ -1517,7 +1627,8 @@ static bool RunSelfTests() {
     all &= RunSuite("BWT",                  Encode_BWT,      Decode_BWT);
     all &= RunSuite("MTF",                  Encode_MTF,      Decode_MTF);
     all &= RunSuite("RLE",                  Encode_RLE,      Decode_RLE);
-    all &= RunSuite("Huffman",              Encode_Huffman,  Decode_Huffman);
+    all &= RunSuite("Huffman",              Encode_Huffman,     Decode_Huffman);
+    all &= RunSuite("RangeCoder",           Encode_RangeCoder,  Decode_RangeCoder);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);
     for (int s = 1; s <= 4; ++s) {

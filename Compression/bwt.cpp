@@ -16,6 +16,7 @@
 #include <cstring>
 #include <cctype>
 #include <cstdio>
+#include <cmath>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -771,6 +772,155 @@ std::vector<uint8_t> Decode_LZSS(const std::vector<uint8_t>& input) {
     return out;
 }
 
+// ==========================================================================
+// LZSS 最適構文解析 (Optimal Parsing)
+//
+//   出力フォーマットは Encode_LZSS_Greedy と完全に同一なので Decode_LZSS で
+//   そのまま復元できる。エンコード側の「賢さ」だけを引き上げる。
+//
+//   手法: 各位置の最長一致を前計算し、前方 DP (最短経路) で
+//         「リテラル / 長さ L の一致」の全分岐から推定ビット最小の経路を選ぶ。
+//   コスト模型は zopfli 風の反復改善:
+//     iter0 はフォーマット実ビット幅 (literal=9, match=24) で最適化、
+//     以降はトークン統計からエントロピー推定コストを再計算して再最適化。
+//   各反復で実際に Encode_Huffman を通した実サイズを測り、最小のものを採用
+//   (greedy も候補に含めるので、貪欲法より悪化することはない)。
+// ==========================================================================
+std::vector<uint8_t> Encode_LZSS_Optimal(const std::vector<uint8_t>& input) {
+    const int n = static_cast<int>(input.size());
+    if (n == 0) {
+        std::vector<uint8_t> out; PutU64(out, 0); BitWriter bw(out); bw.Flush(); return out;
+    }
+    const uint8_t* d = input.data();
+
+    // ---- 1. 各位置の最長一致 (長さ・距離) を前計算 ----
+    std::vector<int> mlen(n, 0), mdist(n, 0);
+    {
+        std::vector<int> head(LZSS_HASH_SIZE, -1), prev(n, -1);
+        for (int i = 0; i < n; ++i) {
+            int maxLen = std::min(LZSS_MAX_MATCH, n - i);
+            int bestLen = 0, bestDist = 0;
+            if (maxLen >= LZSS_MIN_MATCH) {
+                int minPos = std::max(0, i - LZSS_WINDOW);
+                int cand = head[LzssHash(d + i)];
+                int chain = LZSS_MAX_CHAIN;
+                while (cand >= minPos && chain-- > 0) {
+                    if (d[cand + bestLen] == d[i + bestLen]) {
+                        int l = 0;
+                        while (l < maxLen && d[cand + l] == d[i + l]) ++l;
+                        if (l > bestLen) { bestLen = l; bestDist = i - cand; if (l >= maxLen) break; }
+                    }
+                    cand = prev[cand];
+                }
+            }
+            mlen[i] = bestLen; mdist[i] = bestDist;
+            if (i + LZSS_MIN_MATCH <= n) { uint32_t h = LzssHash(d + i); prev[i] = head[h]; head[h] = i; }
+        }
+    }
+
+    struct Tok { int len; int dist; };          // len==1 -> リテラル
+
+    // トークン列 -> LZSS バイト列 (フォーマットは Greedy と同一)
+    auto emit = [&](const std::vector<Tok>& toks) -> std::vector<uint8_t> {
+        std::vector<uint8_t> out; PutU64(out, static_cast<uint64_t>(n));
+        BitWriter bw(out);
+        int pos = 0;
+        for (const Tok& t : toks) {
+            if (t.len == 1) { bw.PutBit(0); bw.PutBits(d[pos], 8); pos += 1; }
+            else {
+                bw.PutBit(1);
+                bw.PutBits(static_cast<uint32_t>(t.dist - 1), LZSS_WINDOW_BITS);
+                bw.PutBits(static_cast<uint32_t>(t.len - LZSS_MIN_MATCH), LZSS_LEN_BITS);
+                pos += t.len;
+            }
+        }
+        bw.Flush();
+        return out;
+    };
+
+    auto bitlen   = [](uint32_t x) { int b = 0; while (x) { ++b; x >>= 1; } return b; };
+    auto distSlot = [&](int D) { return bitlen(static_cast<uint32_t>(D - 1)); };   // 0..15
+
+    // ---- 価格モデル (推定ビット数) ----
+    double flag0P = 1.0, flag1P = 1.0;
+    std::vector<double> litP(256, 8.0);
+    std::vector<double> lenP(LZSS_MAX_MATCH + 1, 8.0);
+    std::vector<double> slotP(16, 0.0);
+    for (int b = 0; b < 16; ++b) { int extra = (b > 0 ? b - 1 : 0); slotP[b] = std::max(0.0, 15.0 - extra); }
+
+    auto distPrice  = [&](int D) { int b = distSlot(D); int extra = (b > 0 ? b - 1 : 0); return slotP[b] + extra; };
+    auto litPrice   = [&](uint8_t c) { return flag0P + litP[c]; };
+
+    const double INF = 1e18;
+    std::vector<double> cost(n + 1, INF);
+    std::vector<int> pLen(n + 1, 0), pDist(n + 1, 0);
+
+    auto runDP = [&]() -> std::vector<Tok> {
+        std::fill(cost.begin(), cost.end(), INF);
+        cost[0] = 0.0;
+        for (int i = 0; i < n; ++i) {
+            if (cost[i] >= INF) continue;
+            double base = cost[i];
+            double lc = base + litPrice(d[i]);                 // リテラル
+            if (lc < cost[i + 1]) { cost[i + 1] = lc; pLen[i + 1] = 1; pDist[i + 1] = 0; }
+            int Lmax = mlen[i];
+            if (Lmax >= LZSS_MIN_MATCH) {
+                int D = mdist[i];
+                double pre = base + flag1P + distPrice(D);
+                for (int L = LZSS_MIN_MATCH; L <= Lmax; ++L) {  // 長さ L の一致
+                    double mc = pre + lenP[L];
+                    if (mc < cost[i + L]) { cost[i + L] = mc; pLen[i + L] = L; pDist[i + L] = D; }
+                }
+            }
+        }
+        std::vector<Tok> toks;
+        int j = n;
+        while (j > 0) {
+            int L = pLen[j];
+            if (L == 1) { toks.push_back({1, 0}); j -= 1; }
+            else        { toks.push_back({L, pDist[j]}); j -= L; }
+        }
+        std::reverse(toks.begin(), toks.end());
+        return toks;
+    };
+
+    // トークン統計からエントロピー推定コストを再計算
+    auto rebuildPrices = [&](const std::vector<Tok>& toks) {
+        std::vector<double> lc(256, 0), le(LZSS_MAX_MATCH + 1, 0), sl(16, 0);
+        double nl = 0, nm = 0;
+        int pos = 0;
+        for (const Tok& t : toks) {
+            if (t.len == 1) { lc[d[pos]] += 1; nl += 1; pos += 1; }
+            else { le[t.len] += 1; sl[distSlot(t.dist)] += 1; nm += 1; pos += t.len; }
+        }
+        double tot = nl + nm;
+        flag0P = -std::log2((nl + 0.5) / (tot + 1.0));
+        flag1P = -std::log2((nm + 0.5) / (tot + 1.0));
+        for (int c = 0; c < 256; ++c) litP[c] = -std::log2((lc[c] + 0.5) / (nl + 128.0));
+        for (int L = 0; L <= LZSS_MAX_MATCH; ++L) lenP[L] = -std::log2((le[L] + 0.5) / (nm + 0.5 * (LZSS_MAX_MATCH + 1)));
+        for (int b = 0; b < 16; ++b) slotP[b] = -std::log2((sl[b] + 0.5) / (nm + 8.0));
+    };
+
+    // 貪欲法の候補 (最低保証)
+    std::vector<Tok> greedy;
+    { int pos = 0; while (pos < n) {
+        if (mlen[pos] >= LZSS_MIN_MATCH) { greedy.push_back({mlen[pos], mdist[pos]}); pos += mlen[pos]; }
+        else { greedy.push_back({1, 0}); pos += 1; } } }
+
+    std::vector<uint8_t> best = emit(greedy);
+    size_t bestSize = Encode_Huffman(best).size();
+
+    const int ITERS = 5;
+    for (int it = 0; it < ITERS; ++it) {
+        std::vector<Tok> toks = runDP();
+        std::vector<uint8_t> bytes = emit(toks);
+        size_t hs = Encode_Huffman(bytes).size();      // 実際の後段ハフマンサイズで評価
+        if (hs < bestSize) { bestSize = hs; best = std::move(bytes); }
+        rebuildPrices(toks);                            // 次反復用のコスト
+    }
+    return best;
+}
+
 // ---- 拡張子から圧縮方式を決定するルーティング ----
 //   今回は仮ルーティング。LZSS 等の新エンジン追加時にここを拡張する。
 static uint8_t RouteByExtension(const std::string& name) {
@@ -807,8 +957,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
     switch (algo) {
         case ALGO_STORE: return in;                       // そのまま
         case ALGO_BWT:   return Pipeline_Encode(in);      // 既存 4 段パイプライン
-        // Step 3-A: LZSS の出力をさらにハフマンで圧縮 (お手軽 Deflate 化)
-        case ALGO_LZSS:  return Encode_Huffman(Encode_LZSS_Greedy(in));
+        // Step 3-A/3-B: 最適構文解析 LZSS の出力をハフマンで圧縮
+        case ALGO_LZSS:  return Encode_Huffman(Encode_LZSS_Optimal(in));
         default:         return in;
     }
 }
@@ -1022,7 +1172,8 @@ static bool RunSelfTests() {
     all &= RunSuite("MTF",                  Encode_MTF,      Decode_MTF);
     all &= RunSuite("RLE",                  Encode_RLE,      Decode_RLE);
     all &= RunSuite("Huffman",              Encode_Huffman,  Decode_Huffman);
-    all &= RunSuite("LZSS",                 Encode_LZSS_Greedy, Decode_LZSS);
+    all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
+    all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 
     // マルチブロック (>900KiB) の検証: 圧縮しやすい部分と乱雑な部分を混在

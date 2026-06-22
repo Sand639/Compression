@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cctype>
+#include <cstdio>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -25,6 +26,12 @@
 #include <fstream>
 #include <filesystem>
 #include <cassert>
+
+// Windows コンソールを UTF-8 に切り替える (日本語の文字化け対策)。
+// windows.h を取り込むと min/max マクロ等が衝突するため、API だけ前方宣言する。
+#ifdef _WIN32
+extern "C" __declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int wCodePageID);
+#endif
 
 // ==========================================================================
 // BWT 本体
@@ -800,7 +807,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
     switch (algo) {
         case ALGO_STORE: return in;                       // そのまま
         case ALGO_BWT:   return Pipeline_Encode(in);      // 既存 4 段パイプライン
-        case ALGO_LZSS:  return Encode_LZSS_Greedy(in);   // LZSS 貪欲法
+        // Step 3-A: LZSS の出力をさらにハフマンで圧縮 (お手軽 Deflate 化)
+        case ALGO_LZSS:  return Encode_Huffman(Encode_LZSS_Greedy(in));
         default:         return in;
     }
 }
@@ -809,7 +817,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
     switch (algo) {
         case ALGO_STORE: return in;
         case ALGO_BWT:   return Pipeline_Decode(in);
-        case ALGO_LZSS:  return Decode_LZSS(in);
+        // Step 3-A: ハフマン復号 -> LZSS 復号 の順
+        case ALGO_LZSS:  return Decode_LZSS(Decode_Huffman(in));
         default:         return in;
     }
 }
@@ -924,8 +933,9 @@ bool CompressFolder(const fs::path& inputDir, const fs::path& outputFile) {
               << "orig=" << totalOrig << " B -> "
               << "archive=" << archive.size() << " B -> " << outputFile.string() << "\n";
     if (totalOrig > 0) {
-        double ratio = 100.0 * archive.size() / totalOrig;
-        std::cout << "           total ratio = " << ratio << " %\n";
+        double ratio = 100.0 * archive.size() / totalOrig;   // 圧縮後割合
+        double saved = 100.0 - ratio;                         // 削減率
+        std::printf("           Saved space: %.1f%% (Ratio: %.1f%%)\n", saved, ratio);
     }
     return true;
 }
@@ -1143,6 +1153,10 @@ static bool VerifyFolders(const fs::path& a, const fs::path& b) {
 // メイン: data/ を 1 ファイルに圧縮 -> data_restored/ へ復元 -> 完全一致検証
 // ==========================================================================
 int main() {
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);   // コンソール出力を UTF-8 に (文字化け対策)
+#endif
+
     // ---- アルゴリズムのセルフテスト ----
     if (!RunSelfTests()) {
         std::cout << "アルゴリズムのセルフテストに失敗しました。\n";

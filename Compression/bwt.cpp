@@ -1220,10 +1220,11 @@ static std::vector<uint8_t> EmitLZSS_4Stream(const uint8_t* d, int /*n*/, const 
             pos += static_cast<size_t>(t.len);
         }
     }
-    std::vector<uint8_t> cA = Encode_RangeCoderO1(A);   // リテラルは 1 次
-    std::vector<uint8_t> cB = Encode_RangeCoder(B);     // 長さ 0 次
-    std::vector<uint8_t> cC = Encode_RangeCoder(C);     // 距離 0 次
-    std::vector<uint8_t> cD = Encode_RangeCoder(D);     // フラグ 0 次
+    // 各ストリーム独立に 0次/1次 の小さい方を採用 (Encode_Entropy が tag 付きで選択)
+    std::vector<uint8_t> cA = Encode_Entropy(A);   // リテラル
+    std::vector<uint8_t> cB = Encode_Entropy(B);   // 長さ
+    std::vector<uint8_t> cC = Encode_Entropy(C);   // 距離
+    std::vector<uint8_t> cD = Encode_Entropy(D);   // フラグ
 
     std::vector<uint8_t> out;
     PutU32(out, static_cast<uint32_t>(cA.size()));
@@ -1253,10 +1254,10 @@ std::vector<uint8_t> Decode_LZSS_4Stream(const std::vector<uint8_t>& in) {
     auto slice = [&](uint32_t len) {
         std::vector<uint8_t> v(in.begin() + pos, in.begin() + pos + len); pos += len; return v;
     };
-    std::vector<uint8_t> A = Decode_RangeCoderO1(slice(sA));
-    std::vector<uint8_t> B = Decode_RangeCoder(slice(sB));
-    std::vector<uint8_t> C = Decode_RangeCoder(slice(sC));
-    std::vector<uint8_t> D = Decode_RangeCoder(slice(sD));
+    std::vector<uint8_t> A = Decode_Entropy(slice(sA));
+    std::vector<uint8_t> B = Decode_Entropy(slice(sB));
+    std::vector<uint8_t> C = Decode_Entropy(slice(sC));
+    std::vector<uint8_t> D = Decode_Entropy(slice(sD));
 
     std::vector<uint8_t> out;
     size_t ai = 0, bi = 0, ci = 0;

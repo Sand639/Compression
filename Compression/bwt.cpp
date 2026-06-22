@@ -1063,45 +1063,58 @@ static std::vector<LzTok> LzssParse(const std::vector<uint8_t>& input) {
     const double INF = 1e18;
     std::vector<double> cost(n + 1, INF);
     std::vector<int> pLen(n + 1, 0), pDist(n + 1, 0);
-    std::vector<int> repAt(n + 1, 0);          // 各位置の最良経路における直前一致距離 (rep)
+    // 各位置の最良経路における rep 履歴 (rep0..rep3)
+    std::vector<int> rA0(n + 1, 0), rA1(n + 1, 0), rA2(n + 1, 0), rA3(n + 1, 0);
 
     auto runDP = [&]() -> std::vector<LzTok> {
         std::fill(cost.begin(), cost.end(), INF);
-        std::fill(repAt.begin(), repAt.end(), 0);
+        std::fill(rA0.begin(), rA0.end(), 0); std::fill(rA1.begin(), rA1.end(), 0);
+        std::fill(rA2.begin(), rA2.end(), 0); std::fill(rA3.begin(), rA3.end(), 0);
         cost[0] = 0.0;
+        // dest を相対づけして緩和 (rep 履歴 nr0..nr3 も記録)
+        auto relax = [&](int dest, double c, int L, int dist, int nr0, int nr1, int nr2, int nr3) {
+            if (c < cost[dest]) {
+                cost[dest] = c; pLen[dest] = L; pDist[dest] = dist;
+                rA0[dest] = nr0; rA1[dest] = nr1; rA2[dest] = nr2; rA3[dest] = nr3;
+            }
+        };
         for (int i = 0; i < n; ++i) {
             if (cost[i] >= INF) continue;
             double base = cost[i];
-            int rep = repAt[i];
+            int r0 = rA0[i], r1 = rA1[i], r2 = rA2[i], r3 = rA3[i];
 
-            // リテラル (rep は不変)
-            double lc = base + litPrice(d[i]);
-            if (lc < cost[i + 1]) { cost[i + 1] = lc; pLen[i + 1] = 1; pDist[i + 1] = 0; repAt[i + 1] = rep; }
+            // リテラル (rep 履歴は不変)
+            relax(i + 1, base + litPrice(d[i]), 1, 0, r0, r1, r2, r3);
 
-            // 通常一致 (距離コストあり, rep を D に更新)
+            // 通常一致 (距離コストあり, 履歴をシフト rep0=D)
             int Lmax = mlen[i];
             if (Lmax >= LZSS_MIN_MATCH) {
                 int D = mdist[i];
                 double pre = base + flagBit + lebPrice(static_cast<uint32_t>(D - 1));
-                for (int L = LZSS_MIN_MATCH; L <= Lmax; ++L) {
-                    double mc = pre + matchLenPrice(L);
-                    if (mc < cost[i + L]) { cost[i + L] = mc; pLen[i + L] = L; pDist[i + L] = D; repAt[i + L] = D; }
-                }
+                for (int L = LZSS_MIN_MATCH; L <= Lmax; ++L)
+                    relax(i + L, pre + matchLenPrice(L), L, D, D, r0, r1, r2);
             }
 
-            // rep 一致 (直前距離を再利用 = 距離コスト 0。パーサを rep へ誘導)
-            if (rep > 0 && rep <= i) {
+            // rep0..rep3 一致 (距離コスト 0。使った rep を rep0 へ昇格)
+            int reps[4] = { r0, r1, r2, r3 };
+            for (int k = 0; k < 4; ++k) {
+                int rk = reps[k];
+                if (rk <= 0 || rk > i) continue;
                 int maxRep = std::min(LZSS_MAX_MATCH, n - i);
-                int s = i - rep;
+                int s = i - rk;
                 int rl = 0;
                 while (rl < maxRep && d[s + rl] == d[i + rl]) ++rl;
-                if (rl >= LZSS_MIN_MATCH) {
-                    double pre = base + flagBit;                 // distPrice 無し
-                    for (int L = LZSS_MIN_MATCH; L <= rl; ++L) {
-                        double mc = pre + matchLenPrice(L);
-                        if (mc < cost[i + L]) { cost[i + L] = mc; pLen[i + L] = L; pDist[i + L] = rep; repAt[i + L] = rep; }
-                    }
-                }
+                if (rl < LZSS_MIN_MATCH) continue;
+                // 昇格後の履歴
+                int n0, n1, n2, n3;
+                if      (k == 0) { n0 = r0; n1 = r1; n2 = r2; n3 = r3; }
+                else if (k == 1) { n0 = r1; n1 = r0; n2 = r2; n3 = r3; }
+                else if (k == 2) { n0 = r2; n1 = r0; n2 = r1; n3 = r3; }
+                else             { n0 = r3; n1 = r0; n2 = r1; n3 = r2; }
+                // rep0 は無料、rep1..3 は稀なので軽いペナルティ (過剰選択を抑制)
+                double pre = base + flagBit + k * 3.0;        // distPrice 無し
+                for (int L = LZSS_MIN_MATCH; L <= rl; ++L)
+                    relax(i + L, pre + matchLenPrice(L), L, rk, n0, n1, n2, n3);
             }
         }
         std::vector<LzTok> toks;
@@ -1233,21 +1246,27 @@ std::vector<uint8_t> Decode_LZSS_Split(const std::vector<uint8_t>& input) {
 static std::vector<uint8_t> EmitLZSS_4Stream(const uint8_t* d, int /*n*/, const std::vector<LzTok>& toks) {
     std::vector<uint8_t> A, B, C, D;
     size_t pos = 0;
-    int rep = 0;                                   // 直前一致距離 (emit/decode 共通の権威状態)
+    int rep[4] = { 0, 0, 0, 0 };                   // rep0..rep3 (emit/decode 共通の権威状態)
     for (const LzTok& t : toks) {
         if (t.len == 1) {                          // リテラル (flag 0)
             D.push_back(0); A.push_back(d[pos]); pos += 1;
-        } else if (t.dist == rep) {                // rep 一致 (flag 2): 距離は出さない
-            D.push_back(2);
-            LzPutLEB(B, static_cast<uint32_t>(t.len - LZSS_MIN_MATCH));
-            pos += static_cast<size_t>(t.len);
-        } else {                                   // 通常一致 (flag 1): 距離を C へ, rep 更新
-            D.push_back(1);
-            LzPutLEB(B, static_cast<uint32_t>(t.len - LZSS_MIN_MATCH));
-            LzPutLEB(C, static_cast<uint32_t>(t.dist - 1));
-            rep = t.dist;
-            pos += static_cast<size_t>(t.len);
+            continue;
         }
+        LzPutLEB(B, static_cast<uint32_t>(t.len - LZSS_MIN_MATCH));   // 長さは共通
+        // 距離が rep0..rep3 のいずれかに一致するか (低い index 優先)
+        int k = -1;
+        for (int j = 0; j < 4; ++j) if (rep[j] == t.dist) { k = j; break; }
+        if (k >= 0) {                              // rep 一致 (flag 2+k): 距離は出さない
+            D.push_back(static_cast<uint8_t>(2 + k));
+            int tmp = rep[k];                      // rep[k] を rep0 へ昇格、間をシフト
+            for (int j = k; j > 0; --j) rep[j] = rep[j - 1];
+            rep[0] = tmp;
+        } else {                                   // 通常一致 (flag 1): 距離を C へ, 履歴シフト
+            D.push_back(1);
+            LzPutLEB(C, static_cast<uint32_t>(t.dist - 1));
+            rep[3] = rep[2]; rep[2] = rep[1]; rep[1] = rep[0]; rep[0] = t.dist;
+        }
+        pos += static_cast<size_t>(t.len);
     }
     // 各ストリーム独立に 0次/1次 の小さい方を採用 (Encode_Entropy が tag 付きで選択)
     std::vector<uint8_t> cA = Encode_Entropy(A);   // リテラル
@@ -1290,21 +1309,26 @@ std::vector<uint8_t> Decode_LZSS_4Stream(const std::vector<uint8_t>& in) {
 
     std::vector<uint8_t> out;
     size_t ai = 0, bi = 0, ci = 0;
-    int rep = 0;                                   // emit と同一規則で更新
+    int rep[4] = { 0, 0, 0, 0 };                   // emit と同一規則で更新
     for (uint8_t f : D) {
         if (f == 0) {                              // リテラル
             out.push_back(A[ai++]);
-        } else if (f == 2) {                       // rep 一致: 距離 = rep (C を読まない)
-            uint32_t len = LzGetLEB(B.data(), bi) + LZSS_MIN_MATCH;
-            size_t start = out.size() - rep;
-            for (uint32_t k = 0; k < len; ++k) out.push_back(out[start + k]);
-        } else {                                   // 通常一致: 距離を C から, rep 更新
-            uint32_t len  = LzGetLEB(B.data(), bi) + LZSS_MIN_MATCH;
-            uint32_t dist = LzGetLEB(C.data(), ci) + 1;
-            rep = static_cast<int>(dist);
-            size_t start = out.size() - dist;
-            for (uint32_t k = 0; k < len; ++k) out.push_back(out[start + k]);
+            continue;
         }
+        uint32_t len = LzGetLEB(B.data(), bi) + LZSS_MIN_MATCH;
+        int dist;
+        if (f == 1) {                              // 通常一致: 距離を C から, 履歴シフト
+            dist = static_cast<int>(LzGetLEB(C.data(), ci) + 1);
+            rep[3] = rep[2]; rep[2] = rep[1]; rep[1] = rep[0]; rep[0] = dist;
+        } else {                                   // rep 一致 (f=2+k): 距離 = rep[k], 昇格
+            int k = f - 2;
+            dist = rep[k];
+            int tmp = rep[k];
+            for (int j = k; j > 0; --j) rep[j] = rep[j - 1];
+            rep[0] = tmp;
+        }
+        size_t start = out.size() - dist;
+        for (uint32_t kk = 0; kk < len; ++kk) out.push_back(out[start + kk]);
     }
     return out;
 }

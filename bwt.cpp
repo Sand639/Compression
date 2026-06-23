@@ -1015,13 +1015,13 @@ struct CMModel {
     std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 33 点、別文脈)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t cx[8] = {0,0,0,0,0,0,0,0};            // cx[k] = 直近 k バイトのハッシュ
-    int c0 = 1, bitpos = 0, mc = 0;
+    int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (ミキサー用)
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
-                matchTab(SM, 0), w(256 * NIN, 1 << 14),
+                matchTab(SM, 0), w(2048 * NIN, 1 << 14),
                 apm(256 * 65), apm2(256 * 65) {
         for (int i = 0; i < 256; ++i)
             for (int j = 0; j < 65; ++j) {
@@ -1060,8 +1060,9 @@ struct CMModel {
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
+        mc_ext = mc * 8 + bitpos;
         long long dot = 0;
-        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc * NIN + i]) * st[i];
+        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc_ext * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
         // APM1: mixer 出力を文脈 (直前バイト mc) で補正 (65点補間)
@@ -1084,7 +1085,7 @@ struct CMModel {
     void update(int bit) {
         int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
         for (int i = 0; i < NIN; ++i) {
-            int& wi = w[mc * NIN + i];
+            int& wi = w[mc_ext * NIN + i];
             wi += (st[i] * err) >> 13;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
         }

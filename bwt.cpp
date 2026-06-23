@@ -1004,10 +1004,10 @@ struct BinaryRangeDecoder {
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 struct CMModel {
-    static const int NIN = 9;                      // o0,o1,o2,o3,o4,o5,o6,o7,match
+    static const int NIN = 10;                     // o0,o1,o2,o3,o4,o5,o6,o7,o8,match
     static const int TBITS = 22, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 22;
-    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
@@ -1015,7 +1015,7 @@ struct CMModel {
     std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 65 点、別文脈)
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
     uint32_t matchPtr = 0; int matchLen = 0;
-    uint32_t cx[8] = {0,0,0,0,0,0,0,0};            // cx[k] = 直近 k バイトのハッシュ
+    uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (ミキサー用)
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
@@ -1023,7 +1023,7 @@ struct CMModel {
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
-                matchTab(SM, 0), w(2048 * NIN, 1 << 14),
+                t8(TSIZE, 2048), matchTab(SM, 0), w(2048 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65) {
         for (int i = 0; i < 2048; ++i)
             for (int j = 0; j < 65; ++j)
@@ -1047,6 +1047,7 @@ struct CMModel {
         idx[5] = static_cast<int>(((cx[5] * 0x9E3779B1u) + c0) & TMASK);  // order5
         idx[6] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
         idx[7] = static_cast<int>(((cx[7] * 0x9E3779B1u) + c0) & TMASK);  // order7
+        idx[8] = static_cast<int>(((cx[8] * 0x9E3779B1u) + c0) & TMASK);  // order8
         st[0] = CM_STR.v[t0[idx[0]]];
         st[1] = CM_STR.v[t1[idx[1]]];
         st[2] = CM_STR.v[t2[idx[2]]];
@@ -1055,7 +1056,8 @@ struct CMModel {
         st[5] = CM_STR.v[t5[idx[5]]];
         st[6] = CM_STR.v[t6[idx[6]]];
         st[7] = CM_STR.v[t7[idx[7]]];
-        st[8] = 0;                                  // match model
+        st[8] = CM_STR.v[t8[idx[8]]];
+        st[9] = 0;                                  // match model
         if (matchPtr > 0 && matchPtr < buf.size()) {
             int predByte = buf[matchPtr];
             int bitsSoFar = c0 - (1 << bitpos);
@@ -1063,7 +1065,7 @@ struct CMModel {
             if (bitsSoFar == expected) {
                 int predBit = (predByte >> (7 - bitpos)) & 1;
                 int conf = (matchLen < 28 ? matchLen : 28) * 72;
-                st[8] = predBit ? conf : -conf;
+                st[9] = predBit ? conf : -conf;
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
@@ -1116,7 +1118,7 @@ struct CMModel {
         apm3[apm3Idx + 1] = static_cast<uint16_t>(apm3[apm3Idx + 1] + ((g - apm3[apm3Idx + 1]) >> 7));
         auto upd  = [&](std::vector<uint16_t>& t, int ix, int sh) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> sh)); };
         upd(t0, idx[0], 5); upd(t1, idx[1], 3); upd(t2, idx[2], 3); upd(t3, idx[3], 3);
-        upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3); upd(t7, idx[7], 3);
+        upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3); upd(t7, idx[7], 3); upd(t8, idx[8], 3);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;
@@ -1125,7 +1127,7 @@ struct CMModel {
             else { matchPtr = 0; matchLen = 0; }
             size_t p = buf.size();
             uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
-            for (int k = 1; k <= 7; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
+            for (int k = 1; k <= 8; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
             if (p >= 4) {
                 uint32_t hh = (static_cast<uint32_t>(buf[p - 1]) | (static_cast<uint32_t>(buf[p - 2]) << 8)
                              | (static_cast<uint32_t>(buf[p - 3]) << 16) | (static_cast<uint32_t>(buf[p - 4]) << 24));

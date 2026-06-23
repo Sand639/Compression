@@ -1001,12 +1001,12 @@ struct BinaryRangeDecoder {
 };
 
 // CM 予測モデル (encode/decode 共通)
-//   文脈モデル: order 0,1,2,3,4,6 + マッチ = 7 入力。mixer + APM(二次推定)。
+//   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 struct CMModel {
-    static const int NIN = 7;                      // o0,o1,o2,o3,o4,o6,match
+    static const int NIN = 8;                      // o0,o1,o2,o3,o4,o5,o6,match
     static const int TBITS = 22, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 22;
-    std::vector<uint16_t> t0, t1, t2, t3, t4, t6;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
@@ -1017,7 +1017,8 @@ struct CMModel {
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
-                t4(TSIZE, 2048), t6(TSIZE, 2048), matchTab(SM, 0), w(256 * NIN, 1 << 14),
+                t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048),
+                matchTab(SM, 0), w(256 * NIN, 1 << 14),
                 apm(256 * 33) {
         for (int i = 0; i < 256; ++i)
             for (int j = 0; j < 33; ++j)
@@ -1030,14 +1031,16 @@ struct CMModel {
         idx[2] = static_cast<int>(((cx[2] * 0x9E3779B1u) + c0) & TMASK);  // order2
         idx[3] = static_cast<int>(((cx[3] * 0x9E3779B1u) + c0) & TMASK);  // order3
         idx[4] = static_cast<int>(((cx[4] * 0x9E3779B1u) + c0) & TMASK);  // order4
-        idx[5] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
+        idx[5] = static_cast<int>(((cx[5] * 0x9E3779B1u) + c0) & TMASK);  // order5
+        idx[6] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
         st[0] = CM_STR.v[t0[idx[0]]];
         st[1] = CM_STR.v[t1[idx[1]]];
         st[2] = CM_STR.v[t2[idx[2]]];
         st[3] = CM_STR.v[t3[idx[3]]];
         st[4] = CM_STR.v[t4[idx[4]]];
-        st[5] = CM_STR.v[t6[idx[5]]];
-        st[6] = 0;                                  // match model
+        st[5] = CM_STR.v[t5[idx[5]]];
+        st[6] = CM_STR.v[t6[idx[6]]];
+        st[7] = 0;                                  // match model
         if (matchPtr > 0 && matchPtr < buf.size()) {
             int predByte = buf[matchPtr];
             int bitsSoFar = c0 - (1 << bitpos);
@@ -1045,7 +1048,7 @@ struct CMModel {
             if (bitsSoFar == expected) {
                 int predBit = (predByte >> (7 - bitpos)) & 1;
                 int conf = (matchLen < 28 ? matchLen : 28) * 72;
-                st[6] = predBit ? conf : -conf;
+                st[7] = predBit ? conf : -conf;
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
@@ -1073,7 +1076,7 @@ struct CMModel {
         apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));
         apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> 7));
         auto upd = [&](std::vector<uint16_t>& t, int ix) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> 5)); };
-        upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]); upd(t4, idx[4]); upd(t6, idx[5]);
+        upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]); upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;

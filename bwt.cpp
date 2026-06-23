@@ -1022,13 +1022,13 @@ struct CMModel {
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
                 matchTab(SM, 0), w(2048 * NIN, 1 << 14),
-                apm(256 * 65), apm2(256 * 65) {
+                apm(2048 * 65), apm2(256 * 65) {
+        for (int i = 0; i < 2048; ++i)
+            for (int j = 0; j < 65; ++j)
+                apm[i * 65 + j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 256; ++i)
-            for (int j = 0; j < 65; ++j) {
-                uint16_t v = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
-                apm[i * 65 + j] = v;
-                apm2[i * 65 + j] = v;
-            }
+            for (int j = 0; j < 65; ++j)
+                apm2[i * 65 + j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
     }
 
     int predict() {
@@ -1065,10 +1065,10 @@ struct CMModel {
         for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc_ext * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
-        // APM1: mixer 出力を文脈 (直前バイト mc) で補正 (65点補間)
+        // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置) で補正 (65点補間)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
         int wt = s & 63, j = s >> 6;
-        apmIdx = mc * 65 + j;
+        apmIdx = mc_ext * 65 + j;
         int ap = (apm[apmIdx] * (64 - wt) + apm[apmIdx + 1] * wt) >> 10;    // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;

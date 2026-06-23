@@ -1022,12 +1022,12 @@ struct CMModel {
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
                 matchTab(SM, 0), w(256 * NIN, 1 << 14),
-                apm(256 * 33), apm2(256 * 33) {
+                apm(256 * 65), apm2(256 * 65) {
         for (int i = 0; i < 256; ++i)
-            for (int j = 0; j < 33; ++j) {
-                uint16_t v = static_cast<uint16_t>(CM_squash((j - 16) * 128) * 16);
-                apm[i * 33 + j] = v;
-                apm2[i * 33 + j] = v;
+            for (int j = 0; j < 65; ++j) {
+                uint16_t v = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
+                apm[i * 65 + j] = v;
+                apm2[i * 65 + j] = v;
             }
     }
 
@@ -1064,19 +1064,19 @@ struct CMModel {
         for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
-        // APM1: mixer 出力を文脈 (直前バイト mc) で補正
+        // APM1: mixer 出力を文脈 (直前バイト mc) で補正 (65点補間)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
-        int wt = s & 127, j = s >> 7;
-        apmIdx = mc * 33 + j;
-        int ap = (apm[apmIdx] * (128 - wt) + apm[apmIdx + 1] * wt) >> 11;   // 12bit
+        int wt = s & 63, j = s >> 6;
+        apmIdx = mc * 65 + j;
+        int ap = (apm[apmIdx] * (64 - wt) + apm[apmIdx + 1] * wt) >> 10;    // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
-        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位8bit) でさらに補正
+        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位8bit) でさらに補正 (65点補間)
         apm2Ctx = static_cast<int>((cx[2] * 0x9E3779B1u) >> 24);
         int s2 = CM_STR.v[prf] + 2048;
-        apm2Wt = s2 & 127; int j2 = s2 >> 7;
-        apm2Idx = apm2Ctx * 33 + j2;
-        int ap2 = (apm2[apm2Idx] * (128 - apm2Wt) + apm2[apm2Idx + 1] * apm2Wt) >> 11;
+        apm2Wt = s2 & 63; int j2 = s2 >> 6;
+        apm2Idx = apm2Ctx * 65 + j2;
+        int ap2 = (apm2[apm2Idx] * (64 - apm2Wt) + apm2[apm2Idx + 1] * apm2Wt) >> 10;
         prf = (prf + ap2) >> 1;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         return prf;

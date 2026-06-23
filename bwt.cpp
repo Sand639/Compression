@@ -1082,7 +1082,7 @@ struct CMModel {
         int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
         for (int i = 0; i < NIN; ++i) {
             int& wi = w[mc * NIN + i];
-            wi += (st[i] * err) >> 12;
+            wi += (st[i] * err) >> 13;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
         }
         int g = bit << 16;                          // APM1 更新

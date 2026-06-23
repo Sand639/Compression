@@ -650,7 +650,8 @@ static const uint8_t ALGO_RAW    = 0x09;   // 生データを直接 Entropy(0次
 static const uint8_t ALGO_CM     = 0x0A;   // コンテキストミキシング (生データ直接, テキスト/exe 向け)
 static const uint8_t ALGO_BCJ_CM = 0x0B;   // BCJ(x86) -> CM (.exe 向け)
 static const uint8_t ALGO_WAV_CM = 0x0C;   // WAV(Mid/Side+LPC) 残差 -> CM (音声向け)
-static const uint8_t ALGO_BMP_CM = 0x0D;   // BMP(2D 予測フィルタ) 残差 -> CM (画像向け)
+static const uint8_t ALGO_BMP_CM  = 0x0D;   // BMP(2D 予測フィルタ) 残差 -> CM (画像向け)
+static const uint8_t ALGO_BMP_CM2 = 0x0E;  // BMP(2D 予測) 残差 + チャンネル分離 -> CM
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -1003,23 +1004,23 @@ struct BinaryRangeDecoder {
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 struct CMModel {
-    static const int NIN = 8;                      // o0,o1,o2,o3,o4,o5,o6,match
+    static const int NIN = 9;                      // o0,o1,o2,o3,o4,o5,o6,o7,match
     static const int TBITS = 22, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 22;
-    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
     std::vector<uint16_t> apm;                     // 一次推定 (256 文脈 x 33 点)
     std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 33 点、別文脈)
     uint32_t matchPtr = 0; int matchLen = 0;
-    uint32_t cx[7] = {0,0,0,0,0,0,0};              // cx[k] = 直近 k バイトのハッシュ
+    uint32_t cx[8] = {0,0,0,0,0,0,0,0};            // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0;
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
-                t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048),
+                t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
                 matchTab(SM, 0), w(256 * NIN, 1 << 14),
                 apm(256 * 33), apm2(256 * 33) {
         for (int i = 0; i < 256; ++i)
@@ -1038,6 +1039,7 @@ struct CMModel {
         idx[4] = static_cast<int>(((cx[4] * 0x9E3779B1u) + c0) & TMASK);  // order4
         idx[5] = static_cast<int>(((cx[5] * 0x9E3779B1u) + c0) & TMASK);  // order5
         idx[6] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
+        idx[7] = static_cast<int>(((cx[7] * 0x9E3779B1u) + c0) & TMASK);  // order7
         st[0] = CM_STR.v[t0[idx[0]]];
         st[1] = CM_STR.v[t1[idx[1]]];
         st[2] = CM_STR.v[t2[idx[2]]];
@@ -1045,7 +1047,8 @@ struct CMModel {
         st[4] = CM_STR.v[t4[idx[4]]];
         st[5] = CM_STR.v[t5[idx[5]]];
         st[6] = CM_STR.v[t6[idx[6]]];
-        st[7] = 0;                                  // match model
+        st[7] = CM_STR.v[t7[idx[7]]];
+        st[8] = 0;                                  // match model
         if (matchPtr > 0 && matchPtr < buf.size()) {
             int predByte = buf[matchPtr];
             int bitsSoFar = c0 - (1 << bitpos);
@@ -1053,7 +1056,7 @@ struct CMModel {
             if (bitsSoFar == expected) {
                 int predBit = (predByte >> (7 - bitpos)) & 1;
                 int conf = (matchLen < 28 ? matchLen : 28) * 72;
-                st[7] = predBit ? conf : -conf;
+                st[8] = predBit ? conf : -conf;
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
@@ -1093,7 +1096,7 @@ struct CMModel {
         apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 8));
         auto upd  = [&](std::vector<uint16_t>& t, int ix, int sh) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> sh)); };
         upd(t0, idx[0], 5); upd(t1, idx[1], 3); upd(t2, idx[2], 3); upd(t3, idx[3], 3);
-        upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3);
+        upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3); upd(t7, idx[7], 3);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;
@@ -1102,7 +1105,7 @@ struct CMModel {
             else { matchPtr = 0; matchLen = 0; }
             size_t p = buf.size();
             uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
-            for (int k = 1; k <= 6; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
+            for (int k = 1; k <= 7; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
             if (p >= 4) {
                 uint32_t hh = (static_cast<uint32_t>(buf[p - 1]) | (static_cast<uint32_t>(buf[p - 2]) << 8)
                              | (static_cast<uint32_t>(buf[p - 3]) << 16) | (static_cast<uint32_t>(buf[p - 4]) << 24));
@@ -2210,6 +2213,65 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     return out;
 }
 
+// BMP フィルタ出力のチャンネル分離: 残差バイトをチャンネル毎にまとめる
+// (B,G,R),(B,G,R)... -> BBB...GGG...RRR...  bpp<3 や rows=0 では恒等変換
+static std::vector<uint8_t> BmpSeparateChannels(const std::vector<uint8_t>& in) {
+    size_t pos = 0;
+    uint32_t headerLen  = GetU32(in.data() + pos); pos += 4 + headerLen;
+    uint32_t bpp        = GetU32(in.data() + pos); pos += 4;
+    uint32_t stride     = GetU32(in.data() + pos); pos += 4;
+    uint32_t rows       = GetU32(in.data() + pos); pos += 4;
+    uint32_t width      = GetU32(in.data() + pos); pos += 4;
+    uint32_t trailerLen = GetU32(in.data() + pos); pos += 4 + trailerLen;
+    pos += rows;   // filter types
+
+    if (bpp < 3 || rows == 0 || pos > in.size()) return in;
+
+    uint32_t pixW = width * bpp;
+    uint32_t pad  = stride - pixW;
+    std::vector<uint8_t> out(in.begin(), in.begin() + pos);   // metadata unchanged
+
+    const uint8_t* resid = in.data() + pos;
+    for (uint32_t ch = 0; ch < bpp; ++ch)
+        for (uint32_t r = 0; r < rows; ++r)
+            for (uint32_t x = ch; x < pixW; x += bpp)
+                out.push_back(resid[r * stride + x]);
+    for (uint32_t r = 0; r < rows; ++r)
+        for (uint32_t x = 0; x < pad; ++x)
+            out.push_back(resid[r * stride + pixW + x]);
+    return out;
+}
+
+// BmpSeparateChannels の逆: チャンネル毎まとめ -> インターリーブに戻す
+static std::vector<uint8_t> BmpJoinChannels(const std::vector<uint8_t>& in) {
+    size_t pos = 0;
+    uint32_t headerLen  = GetU32(in.data() + pos); pos += 4 + headerLen;
+    uint32_t bpp        = GetU32(in.data() + pos); pos += 4;
+    uint32_t stride     = GetU32(in.data() + pos); pos += 4;
+    uint32_t rows       = GetU32(in.data() + pos); pos += 4;
+    uint32_t width      = GetU32(in.data() + pos); pos += 4;
+    uint32_t trailerLen = GetU32(in.data() + pos); pos += 4 + trailerLen;
+    pos += rows;   // filter types
+
+    if (bpp < 3 || rows == 0 || pos > in.size()) return in;
+
+    uint32_t pixW = width * bpp;
+    uint32_t pad  = stride - pixW;
+    std::vector<uint8_t> out(in.begin(), in.begin() + pos);
+    out.resize(pos + rows * stride, 0);
+    uint8_t* oResid   = out.data() + pos;
+    const uint8_t* sp = in.data() + pos;
+
+    for (uint32_t ch = 0; ch < bpp; ++ch)
+        for (uint32_t r = 0; r < rows; ++r)
+            for (uint32_t x = ch; x < pixW; x += bpp)
+                oResid[r * stride + x] = *sp++;
+    for (uint32_t r = 0; r < rows; ++r)
+        for (uint32_t x = 0; x < pad; ++x)
+            oResid[r * stride + pixW + x] = *sp++;
+    return out;
+}
+
 // ---- 方式に応じた 1 ファイルの圧縮 / 復元 ----
 //   圧縮方式は拡張子ではなく「トーナメント」(全方式を試して最小を採用) で決める。
 static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
@@ -2237,6 +2299,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_CM(Encode_Wav_MidSide_Delta(in));
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM
             return Encode_CM(Encode_Bmp_2DPredict(in));
+        case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
+            return Encode_CM(BmpSeparateChannels(Encode_Bmp_2DPredict(in)));
         default:         return in;
     }
 }
@@ -2266,6 +2330,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Wav_MidSide_Delta(Decode_CM(in));
         case ALGO_BMP_CM:                                      // 逆順: CM -> BMP
             return Decode_Bmp_2DPredict(Decode_CM(in));
+        case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
+            return Decode_Bmp_2DPredict(BmpJoinChannels(Decode_CM(in)));
         default:         return in;
     }
 }
@@ -2275,7 +2341,7 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
     ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
-    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM, ALGO_BMP_CM2
 };
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
@@ -2351,7 +2417,8 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_CM:     return "CM";
         case ALGO_BCJ_CM: return "BCJ+CM";
         case ALGO_WAV_CM: return "WAV+CM";
-        case ALGO_BMP_CM: return "BMP+CM";
+        case ALGO_BMP_CM:  return "BMP+CM";
+        case ALGO_BMP_CM2: return "BMP+CM(sep)";
         case ALGO_STORE:  return "Store";
         default:          return "?";
     }

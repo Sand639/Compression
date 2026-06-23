@@ -1005,7 +1005,7 @@ struct BinaryRangeDecoder {
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 struct CMModel {
     static const int NIN = 10;                     // o0,o1,o2,o3,o4,o5,o6,o7,o8,match
-    static const int TBITS = 22, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
+    static const int TBITS = 23, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 24;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab;

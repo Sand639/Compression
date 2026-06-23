@@ -647,6 +647,7 @@ static const uint8_t ALGO_BCJ    = 0x06;   // BCJ(x86) -> LZSS -> Huffman (.exe 
 static const uint8_t ALGO_WAV    = 0x07;   // WAV(Mid/Side+Delta) -> LZSS -> Huffman
 static const uint8_t ALGO_BMP    = 0x08;   // BMP(2D 予測フィルタ) -> LZSS -> Huffman
 static const uint8_t ALGO_RAW    = 0x09;   // 生データを直接 Entropy(0次/1次) で符号化
+static const uint8_t ALGO_CM     = 0x0A;   // コンテキストミキシング (生データ直接, テキスト/exe 向け)
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -942,6 +943,191 @@ std::vector<uint8_t> Decode_Entropy(const std::vector<uint8_t>& input) {
     if (tag == 2) return Decode_RangeCoderO2(rest);
     if (tag == 1) return Decode_RangeCoderO1(rest);
     return Decode_RangeCoder(rest);
+}
+
+// ==========================================================================
+// コンテキストミキシング (CM) — 二値算術符号化 + 複数文脈モデル + ロジスティック混合
+//   lpaq 系の軽量版。モデル: order-1/2/3 文脈 + マッチモデル。各モデルの予測を
+//   stretch 領域で重み付き加算 (mixer) し squash で最終確率に。1 ビットごとに
+//   実ビットで各重みとモデル確率を更新。エンコード/デコードは同一モデルを駆動し
+//   符号器だけが異なるので完全可逆。出力: [u64 size][二値算術ストリーム]。
+// ==========================================================================
+static int CM_squash(int d) {
+    static const int t[33] = {1,2,3,6,10,16,27,45,73,120,194,310,488,747,1101,1546,2047,
+                              2549,2994,3348,3607,3785,3901,3975,4022,4050,4068,4079,4085,4089,4092,4093,4094};
+    if (d >  2047) return 4095;
+    if (d < -2047) return 0;
+    int w = d & 127; d = (d >> 7) + 16;
+    return (t[d] * (128 - w) + t[d + 1] * w + 64) >> 7;
+}
+struct CM_Stretch {
+    int v[4096];
+    CM_Stretch() {
+        int pi = 0;
+        for (int x = -2047; x <= 2047; ++x) { int val = CM_squash(x); for (int j = pi; j <= val; ++j) v[j] = x; pi = val + 1; }
+        for (int j = pi; j < 4096; ++j) v[j] = 2047;
+    }
+};
+static const CM_Stretch CM_STR;
+
+struct BinaryRangeEncoder {
+    uint32_t x1 = 0, x2 = 0xFFFFFFFFu;
+    std::vector<uint8_t>& out;
+    explicit BinaryRangeEncoder(std::vector<uint8_t>& o) : out(o) {}
+    void encode(int bit, int p) {                 // p = P(bit==1), 12bit (1..4095)
+        if (p < 1) p = 1; else if (p > 4095) p = 4095;
+        uint32_t xmid = x1 + static_cast<uint32_t>((static_cast<uint64_t>(x2 - x1) * p) >> 12);
+        if (bit) x2 = xmid; else x1 = xmid + 1;
+        while (((x1 ^ x2) & 0xFF000000u) == 0) { out.push_back(static_cast<uint8_t>(x2 >> 24)); x1 <<= 8; x2 = (x2 << 8) | 0xFF; }
+    }
+    void flush() { for (int i = 0; i < 4; ++i) { out.push_back(static_cast<uint8_t>(x1 >> 24)); x1 <<= 8; } }
+};
+struct BinaryRangeDecoder {
+    uint32_t x1 = 0, x2 = 0xFFFFFFFFu, x = 0;
+    const uint8_t* in; size_t pos = 0, size;
+    BinaryRangeDecoder(const uint8_t* d, size_t s) : in(d), size(s) { for (int i = 0; i < 4; ++i) x = (x << 8) | rb(); }
+    uint8_t rb() { return pos < size ? in[pos++] : 0; }
+    int decode(int p) {
+        if (p < 1) p = 1; else if (p > 4095) p = 4095;
+        uint32_t xmid = x1 + static_cast<uint32_t>((static_cast<uint64_t>(x2 - x1) * p) >> 12);
+        int bit = (x <= xmid) ? 1 : 0;
+        if (bit) x2 = xmid; else x1 = xmid + 1;
+        while (((x1 ^ x2) & 0xFF000000u) == 0) { x1 <<= 8; x2 = (x2 << 8) | 0xFF; x = (x << 8) | rb(); }
+        return bit;
+    }
+};
+
+// CM 予測モデル (encode/decode 共通)
+//   文脈モデル: order 0,1,2,3,4,6 + マッチ = 7 入力。mixer + APM(二次推定)。
+struct CMModel {
+    static const int NIN = 7;                      // o0,o1,o2,o3,o4,o6,match
+    static const int TBITS = 22, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
+    static const int SM = 1 << 22;
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t6;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint32_t> matchTab;
+    std::vector<uint8_t> buf;
+    std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
+    std::vector<uint16_t> apm;                     // 二次推定 (256 文脈 x 33 点)
+    uint32_t matchPtr = 0; int matchLen = 0;
+    uint32_t cx[7] = {0,0,0,0,0,0,0};              // cx[k] = 直近 k バイトのハッシュ
+    int c0 = 1, bitpos = 0, mc = 0;
+    int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
+
+    CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
+                t4(TSIZE, 2048), t6(TSIZE, 2048), matchTab(SM, 0), w(256 * NIN, 1 << 14),
+                apm(256 * 33) {
+        for (int i = 0; i < 256; ++i)
+            for (int j = 0; j < 33; ++j)
+                apm[i * 33 + j] = static_cast<uint16_t>(CM_squash((j - 16) * 128) * 16);
+    }
+
+    int predict() {
+        idx[0] = c0;                                                       // order0
+        idx[1] = static_cast<int>((cx[1] & 0xFF) * 512 + c0);             // order1
+        idx[2] = static_cast<int>(((cx[2] * 0x9E3779B1u) + c0) & TMASK);  // order2
+        idx[3] = static_cast<int>(((cx[3] * 0x9E3779B1u) + c0) & TMASK);  // order3
+        idx[4] = static_cast<int>(((cx[4] * 0x9E3779B1u) + c0) & TMASK);  // order4
+        idx[5] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
+        st[0] = CM_STR.v[t0[idx[0]]];
+        st[1] = CM_STR.v[t1[idx[1]]];
+        st[2] = CM_STR.v[t2[idx[2]]];
+        st[3] = CM_STR.v[t3[idx[3]]];
+        st[4] = CM_STR.v[t4[idx[4]]];
+        st[5] = CM_STR.v[t6[idx[5]]];
+        st[6] = 0;                                  // match model
+        if (matchPtr > 0 && matchPtr < buf.size()) {
+            int predByte = buf[matchPtr];
+            int bitsSoFar = c0 - (1 << bitpos);
+            int expected = predByte >> (8 - bitpos);
+            if (bitsSoFar == expected) {
+                int predBit = (predByte >> (7 - bitpos)) & 1;
+                int conf = (matchLen < 28 ? matchLen : 28) * 72;
+                st[6] = predBit ? conf : -conf;
+            }
+        }
+        mc = static_cast<int>(cx[1] & 0xFF);
+        long long dot = 0;
+        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc * NIN + i]) * st[i];
+        pr0 = CM_squash(static_cast<int>(dot >> 16));
+        if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
+        // APM (二次推定): mixer 出力を文脈 (直前バイト) で補正
+        int s = CM_STR.v[pr0] + 2048;               // 0..4095
+        int wt = s & 127, j = s >> 7;
+        apmIdx = mc * 33 + j;
+        int ap = (apm[apmIdx] * (128 - wt) + apm[apmIdx + 1] * wt) >> 11;   // 12bit
+        prf = (pr0 + 3 * ap) >> 2;
+        if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
+        return prf;
+    }
+    void update(int bit) {
+        int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
+        for (int i = 0; i < NIN; ++i) {
+            int& wi = w[mc * NIN + i];
+            wi += (st[i] * err) >> 10;
+            if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
+        }
+        int g = bit << 16;                          // APM 更新
+        apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));
+        apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> 7));
+        auto upd = [&](std::vector<uint16_t>& t, int ix) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> 5)); };
+        upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]); upd(t4, idx[4]); upd(t6, idx[5]);
+        c0 = (c0 << 1) | bit; ++bitpos;
+        if (bitpos == 8) {
+            int B = c0 & 0xFF;
+            buf.push_back(static_cast<uint8_t>(B));
+            if (matchPtr > 0 && matchPtr < buf.size() - 1 && buf[matchPtr] == B) { ++matchPtr; ++matchLen; }
+            else { matchPtr = 0; matchLen = 0; }
+            size_t p = buf.size();
+            uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
+            for (int k = 1; k <= 6; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
+            if (p >= 4) {
+                uint32_t hh = (static_cast<uint32_t>(buf[p - 1]) | (static_cast<uint32_t>(buf[p - 2]) << 8)
+                             | (static_cast<uint32_t>(buf[p - 3]) << 16) | (static_cast<uint32_t>(buf[p - 4]) << 24));
+                hh = (hh * 2654435761u) & (SM - 1);
+                if (matchPtr == 0) { uint32_t cand = matchTab[hh]; if (cand > 0 && cand < p) { matchPtr = cand; matchLen = 1; } }
+                matchTab[hh] = static_cast<uint32_t>(p);
+            }
+            c0 = 1; bitpos = 0;
+        }
+    }
+};
+
+std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input) {
+    std::vector<uint8_t> out;
+    PutU64(out, static_cast<uint64_t>(input.size()));
+    if (input.empty()) return out;
+    CMModel cm;
+    BinaryRangeEncoder enc(out);
+    for (uint8_t B : input) {
+        for (int k = 7; k >= 0; --k) {
+            int bit = (B >> k) & 1;
+            int p = cm.predict();
+            enc.encode(bit, p);
+            cm.update(bit);
+        }
+    }
+    enc.flush();
+    return out;
+}
+std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input) {
+    if (input.size() < 8) return {};
+    uint64_t n = GetU64(input.data());
+    std::vector<uint8_t> out;
+    if (n == 0) return out;
+    out.reserve(static_cast<size_t>(n));
+    CMModel cm;
+    BinaryRangeDecoder dec(input.data() + 8, input.size() - 8);
+    for (uint64_t i = 0; i < n; ++i) {
+        int B = 0;
+        for (int k = 0; k < 8; ++k) {
+            int p = cm.predict();
+            int bit = dec.decode(p);
+            cm.update(bit);
+            B = (B << 1) | bit;
+        }
+        out.push_back(static_cast<uint8_t>(B));
+    }
+    return out;
 }
 
 // ==========================================================================
@@ -2020,6 +2206,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return CompressLZSS(Encode_Bmp_2DPredict(in));
         case ALGO_RAW:                                         // 生データ -> Entropy(0次/1次) 直掛け
             return Encode_Entropy(in);
+        case ALGO_CM:                                          // 生データ -> コンテキストミキシング
+            return Encode_CM(in);
         default:         return in;
     }
 }
@@ -2041,6 +2229,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Bmp_2DPredict(DecompressLZSS(in));
         case ALGO_RAW:                                         // Entropy 直掛けの逆
             return Decode_Entropy(in);
+        case ALGO_CM:                                          // CM 直掛けの逆
+            return Decode_CM(in);
         default:         return in;
     }
 }
@@ -2049,7 +2239,7 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
 static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
-    ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW
+    ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM
 };
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
@@ -2122,6 +2312,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_WAV:    return "WAV+LZSS";
         case ALGO_BMP:    return "BMP+LZSS";
         case ALGO_RAW:    return "Range(o0/o1)";
+        case ALGO_CM:     return "CM";
         case ALGO_STORE:  return "Store";
         default:          return "?";
     }
@@ -2278,6 +2469,7 @@ static bool RunSelfTests() {
     all &= RunSuite("RangeCoder o0",        Encode_RangeCoder,   Decode_RangeCoder);
     all &= RunSuite("RangeCoder o1",        Encode_RangeCoderO1, Decode_RangeCoderO1);
     all &= RunSuite("RangeCoder o2",        Encode_RangeCoderO2, Decode_RangeCoderO2);
+    all &= RunSuite("CM",                   Encode_CM,           Decode_CM);
     all &= RunSuite("Entropy(o0/o1)",       Encode_Entropy,      Decode_Entropy);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);

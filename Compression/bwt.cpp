@@ -1527,30 +1527,37 @@ static inline uint16_t WavPredict(int order, uint16_t p1, uint16_t p2, uint16_t 
 }
 
 // ---- 真の LPC (線形予測符号化) ----
-static const int LPC_ORDER = 8;        // 予測次数
-static const int LPC_Q     = 12;       // 係数の量子化シフト
+static const int LPC_ORDER = 16;       // 予測次数 (8->16)
 static const uint8_t WAV_METHOD_LPC = 5;   // ブロック method 値 (0-4=固定, 5=LPC)
 
-// 整数 LPC 予測 (連続履歴, uint16 を int16 とみなす)。enc/dec で同一。
-static inline int WavLpcPredict(const uint16_t* v, size_t i, const int16_t* q) {
+// 整数 LPC 予測 (連続履歴, uint16 を int16 とみなす, シフトはブロック毎)。enc/dec で同一。
+static inline int WavLpcPredict(const uint16_t* v, size_t i, const int16_t* q, int shift) {
     long long sum = 0;
     for (int j = 0; j < LPC_ORDER; ++j) {
         int sv = (i >= static_cast<size_t>(j + 1)) ? static_cast<int>(static_cast<int16_t>(v[i - 1 - j])) : 0;
         sum += static_cast<long long>(q[j]) * sv;
     }
-    return static_cast<int>(sum >> LPC_Q);     // 算術右シフト
+    return static_cast<int>(sum >> shift);     // 算術右シフト
 }
 
-// [lo,hi) ブロックの自己相関 -> Levinson-Durbin -> 量子化係数 q[ORDER]。残差絶対値和を返す。
-static long WavLpcAnalyze(const std::vector<uint16_t>& v, size_t lo, size_t hi, int16_t* q) {
+// [lo,hi) の窓付き自己相関 -> Levinson-Durbin -> ブロック毎シフトで量子化。残差絶対値和を返す。
+static long WavLpcAnalyze(const std::vector<uint16_t>& v, size_t lo, size_t hi, int16_t* q, int& outShift) {
     const long BIGCOST = 0x7fffffffL;
     size_t len = hi - lo;
     if (len < static_cast<size_t>(LPC_ORDER + 1)) return BIGCOST;
+
+    // Welch 窓を掛けてから自己相関 (係数推定の安定化)
     std::vector<double> s(len);
-    for (size_t i = 0; i < len; ++i) s[i] = static_cast<double>(static_cast<int16_t>(v[lo + i]));
+    double half = (len - 1) / 2.0;
+    for (size_t i = 0; i < len; ++i) {
+        double t = (static_cast<double>(i) - half) / (half > 0 ? half : 1.0);
+        double w = 1.0 - t * t;
+        s[i] = static_cast<double>(static_cast<int16_t>(v[lo + i])) * w;
+    }
     double R[LPC_ORDER + 1];
     for (int j = 0; j <= LPC_ORDER; ++j) { double acc = 0; for (size_t i = j; i < len; ++i) acc += s[i] * s[i - j]; R[j] = acc; }
     if (R[0] <= 0) return BIGCOST;
+
     double a[LPC_ORDER] = {0}, err = R[0];
     for (int i = 0; i < LPC_ORDER; ++i) {
         double acc = R[i + 1];
@@ -1562,15 +1569,25 @@ static long WavLpcAnalyze(const std::vector<uint16_t>& v, size_t lo, size_t hi, 
         err *= (1 - k * k);
         if (err <= 0) break;
     }
+
+    // 係数の最大値からブロック毎の量子化シフトを決定 (精度 ~14bit, int16 に収める)
+    double cmax = 0;
+    for (int j = 0; j < LPC_ORDER; ++j) { double c = a[j] < 0 ? -a[j] : a[j]; if (c > cmax) cmax = c; }
+    if (cmax <= 0) return BIGCOST;
+    int shift = 13 - static_cast<int>(std::floor(std::log2(cmax)));
+    if (shift > 15) shift = 15;
+    if (shift < 1)  shift = 1;
+    outShift = shift;
     for (int j = 0; j < LPC_ORDER; ++j) {
-        long qq = std::lround(a[j] * static_cast<double>(1 << LPC_Q));
+        long qq = std::lround(a[j] * static_cast<double>(1 << shift));
         if (qq > 32767) qq = 32767;
         if (qq < -32768) qq = -32768;
         q[j] = static_cast<int16_t>(qq);
     }
+
     long cost = 0;
     for (size_t i = lo; i < hi; ++i) {
-        int pred = WavLpcPredict(v.data(), i, q);
+        int pred = WavLpcPredict(v.data(), i, q, shift);
         uint16_t r = static_cast<uint16_t>(v[i] - static_cast<uint16_t>(pred));
         int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
         cost += (sv < 0) ? -sv : sv;
@@ -1658,20 +1675,21 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         outCost = bc; return bo;
     };
 
-    // ブロックごとに mid/side の手法を決定: 固定予測(0-4) か LPC(5)。LPC 採用時は係数を保持。
+    // ブロックごとに mid/side の手法を決定: 固定予測(0-4) か LPC(5)。LPC 採用時は係数+シフトを保持。
     std::vector<uint8_t> midMethod(numBlocks), sideMethod(numBlocks);
+    std::vector<uint8_t> midShift(numBlocks, 0), sideShift(numBlocks, 0);
     std::vector<int16_t> midCoef(numBlocks * LPC_ORDER, 0), sideCoef(numBlocks * LPC_ORDER, 0);
     auto chooseMethod = [&](const std::vector<uint16_t>& v, size_t lo, size_t hi,
-                            uint8_t& method, int16_t* coef) {
+                            uint8_t& method, uint8_t& shiftOut, int16_t* coef) {
         long fc; int fo = pickFixed(v, lo, hi, fc);
-        int16_t q[LPC_ORDER]; long lc = WavLpcAnalyze(v, lo, hi, q);
-        if (lc < fc) { method = WAV_METHOD_LPC; for (int j = 0; j < LPC_ORDER; ++j) coef[j] = q[j]; }
+        int16_t q[LPC_ORDER]; int sh = 0; long lc = WavLpcAnalyze(v, lo, hi, q, sh);
+        if (lc < fc) { method = WAV_METHOD_LPC; shiftOut = static_cast<uint8_t>(sh); for (int j = 0; j < LPC_ORDER; ++j) coef[j] = q[j]; }
         else         { method = static_cast<uint8_t>(fo); }
     };
     for (size_t b = 0; b < numBlocks; ++b) {
         size_t lo = b * BS, hi = std::min(frames, (b + 1) * BS);
-        chooseMethod(mid,  lo, hi, midMethod[b],  &midCoef[b * LPC_ORDER]);
-        chooseMethod(side, lo, hi, sideMethod[b], &sideCoef[b * LPC_ORDER]);
+        chooseMethod(mid,  lo, hi, midMethod[b],  midShift[b],  &midCoef[b * LPC_ORDER]);
+        chooseMethod(side, lo, hi, sideMethod[b], sideShift[b], &sideCoef[b * LPC_ORDER]);
     }
 
     // ヘッダ出力
@@ -1682,12 +1700,12 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     PutU32(out, static_cast<uint32_t>(in.size() - pcmEnd));
     out.insert(out.end(), in.begin() + pcmEnd, in.end());               // trailer
 
-    // ブロック手法配列 (mid, side 各 1 バイト) と、LPC ブロックの量子化係数
+    // ブロック手法配列 (mid, side 各 1 バイト) と、LPC ブロックの [shift][係数]
     auto putI16 = [&](int16_t x) { uint16_t u = static_cast<uint16_t>(x); out.push_back(static_cast<uint8_t>(u)); out.push_back(static_cast<uint8_t>(u >> 8)); };
     for (size_t b = 0; b < numBlocks; ++b) { out.push_back(midMethod[b]); out.push_back(sideMethod[b]); }
     for (size_t b = 0; b < numBlocks; ++b) {
-        if (midMethod[b]  == WAV_METHOD_LPC) for (int j = 0; j < LPC_ORDER; ++j) putI16(midCoef[b * LPC_ORDER + j]);
-        if (sideMethod[b] == WAV_METHOD_LPC) for (int j = 0; j < LPC_ORDER; ++j) putI16(sideCoef[b * LPC_ORDER + j]);
+        if (midMethod[b]  == WAV_METHOD_LPC) { out.push_back(midShift[b]);  for (int j = 0; j < LPC_ORDER; ++j) putI16(midCoef[b * LPC_ORDER + j]); }
+        if (sideMethod[b] == WAV_METHOD_LPC) { out.push_back(sideShift[b]); for (int j = 0; j < LPC_ORDER; ++j) putI16(sideCoef[b * LPC_ORDER + j]); }
     }
 
     // 各フレームを所属ブロックの手法で予測 -> バイトプレーン分離 (履歴は連続)
@@ -1695,9 +1713,9 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     for (size_t i = 0; i < frames; ++i) {
         size_t b = i / BS;
         uint16_t mpred, spred;
-        if (midMethod[b] == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER]));
+        if (midMethod[b] == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER], midShift[b]));
         else { uint16_t p1=(i>=1)?mid[i-1]:0,p2=(i>=2)?mid[i-2]:0,p3=(i>=3)?mid[i-3]:0,p4=(i>=4)?mid[i-4]:0; mpred = WavPredict(midMethod[b],p1,p2,p3,p4); }
-        if (sideMethod[b] == WAV_METHOD_LPC) spred = static_cast<uint16_t>(WavLpcPredict(side.data(), i, &sideCoef[b * LPC_ORDER]));
+        if (sideMethod[b] == WAV_METHOD_LPC) spred = static_cast<uint16_t>(WavLpcPredict(side.data(), i, &sideCoef[b * LPC_ORDER], sideShift[b]));
         else { uint16_t p1=(i>=1)?side[i-1]:0,p2=(i>=2)?side[i-2]:0,p3=(i>=3)?side[i-3]:0,p4=(i>=4)?side[i-4]:0; spred = WavPredict(sideMethod[b],p1,p2,p3,p4); }
         uint16_t mr = static_cast<uint16_t>(mid[i]  - mpred);
         uint16_t sr = static_cast<uint16_t>(side[i] - spred);
@@ -1730,12 +1748,13 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
 
     // ブロック手法配列 (mid, side 各 1 バイト)
     const uint8_t* methods = in.data() + pos; pos += 2 * numBlocks;
-    // LPC ブロックの量子化係数を読み出し
+    // LPC ブロックの [shift][量子化係数] を読み出し
     std::vector<int16_t> midCoef(numBlocks * LPC_ORDER, 0), sideCoef(numBlocks * LPC_ORDER, 0);
+    std::vector<uint8_t> midShift(numBlocks, 0), sideShift(numBlocks, 0);
     auto getI16 = [&]() { uint16_t u = static_cast<uint16_t>(in[pos] | (in[pos + 1] << 8)); pos += 2; return static_cast<int16_t>(u); };
     for (size_t b = 0; b < numBlocks; ++b) {
-        if (methods[2 * b]     == WAV_METHOD_LPC) for (int j = 0; j < LPC_ORDER; ++j) midCoef[b * LPC_ORDER + j]  = getI16();
-        if (methods[2 * b + 1] == WAV_METHOD_LPC) for (int j = 0; j < LPC_ORDER; ++j) sideCoef[b * LPC_ORDER + j] = getI16();
+        if (methods[2 * b]     == WAV_METHOD_LPC) { midShift[b]  = in[pos++]; for (int j = 0; j < LPC_ORDER; ++j) midCoef[b * LPC_ORDER + j]  = getI16(); }
+        if (methods[2 * b + 1] == WAV_METHOD_LPC) { sideShift[b] = in[pos++]; for (int j = 0; j < LPC_ORDER; ++j) sideCoef[b * LPC_ORDER + j] = getI16(); }
     }
 
     const uint8_t* midLo  = in.data() + pos;
@@ -1751,9 +1770,9 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         uint16_t mr = static_cast<uint16_t>(midLo[i]  | (midHi[i]  << 8));
         uint16_t sr = static_cast<uint16_t>(sideLo[i] | (sideHi[i] << 8));
         uint16_t mpred, spred;
-        if (mMethod == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER]));
+        if (mMethod == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER], midShift[b]));
         else { uint16_t p1=(i>=1)?mid[i-1]:0,p2=(i>=2)?mid[i-2]:0,p3=(i>=3)?mid[i-3]:0,p4=(i>=4)?mid[i-4]:0; mpred = WavPredict(mMethod,p1,p2,p3,p4); }
-        if (sMethod == WAV_METHOD_LPC) spred = static_cast<uint16_t>(WavLpcPredict(side.data(), i, &sideCoef[b * LPC_ORDER]));
+        if (sMethod == WAV_METHOD_LPC) spred = static_cast<uint16_t>(WavLpcPredict(side.data(), i, &sideCoef[b * LPC_ORDER], sideShift[b]));
         else { uint16_t p1=(i>=1)?side[i-1]:0,p2=(i>=2)?side[i-2]:0,p3=(i>=3)?side[i-3]:0,p4=(i>=4)?side[i-4]:0; spred = WavPredict(sMethod,p1,p2,p3,p4); }
         mid[i]  = static_cast<uint16_t>(mr + mpred);
         side[i] = static_cast<uint16_t>(sr + spred);

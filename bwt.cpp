@@ -648,6 +648,9 @@ static const uint8_t ALGO_WAV    = 0x07;   // WAV(Mid/Side+Delta) -> LZSS -> Huf
 static const uint8_t ALGO_BMP    = 0x08;   // BMP(2D 予測フィルタ) -> LZSS -> Huffman
 static const uint8_t ALGO_RAW    = 0x09;   // 生データを直接 Entropy(0次/1次) で符号化
 static const uint8_t ALGO_CM     = 0x0A;   // コンテキストミキシング (生データ直接, テキスト/exe 向け)
+static const uint8_t ALGO_BCJ_CM = 0x0B;   // BCJ(x86) -> CM (.exe 向け)
+static const uint8_t ALGO_WAV_CM = 0x0C;   // WAV(Mid/Side+LPC) 残差 -> CM (音声向け)
+static const uint8_t ALGO_BMP_CM = 0x0D;   // BMP(2D 予測フィルタ) 残差 -> CM (画像向け)
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -2208,6 +2211,12 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_Entropy(in);
         case ALGO_CM:                                          // 生データ -> コンテキストミキシング
             return Encode_CM(in);
+        case ALGO_BCJ_CM:                                      // BCJ -> CM
+            return Encode_CM(Encode_BCJ(in));
+        case ALGO_WAV_CM:                                      // WAV 残差 -> CM
+            return Encode_CM(Encode_Wav_MidSide_Delta(in));
+        case ALGO_BMP_CM:                                      // BMP 残差 -> CM
+            return Encode_CM(Encode_Bmp_2DPredict(in));
         default:         return in;
     }
 }
@@ -2231,6 +2240,12 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Entropy(in);
         case ALGO_CM:                                          // CM 直掛けの逆
             return Decode_CM(in);
+        case ALGO_BCJ_CM:                                      // 逆順: CM -> BCJ
+            return Decode_BCJ(Decode_CM(in));
+        case ALGO_WAV_CM:                                      // 逆順: CM -> WAV
+            return Decode_Wav_MidSide_Delta(Decode_CM(in));
+        case ALGO_BMP_CM:                                      // 逆順: CM -> BMP
+            return Decode_Bmp_2DPredict(Decode_CM(in));
         default:         return in;
     }
 }
@@ -2239,7 +2254,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
 static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
-    ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM
+    ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM
 };
 
 // ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
@@ -2313,6 +2329,9 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_BMP:    return "BMP+LZSS";
         case ALGO_RAW:    return "Range(o0/o1)";
         case ALGO_CM:     return "CM";
+        case ALGO_BCJ_CM: return "BCJ+CM";
+        case ALGO_WAV_CM: return "WAV+CM";
+        case ALGO_BMP_CM: return "BMP+CM";
         case ALGO_STORE:  return "Store";
         default:          return "?";
     }

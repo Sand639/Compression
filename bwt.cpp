@@ -1093,7 +1093,7 @@ struct CMModel {
         apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 7));
         auto upd  = [&](std::vector<uint16_t>& t, int ix, int sh) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> sh)); };
         upd(t0, idx[0], 5); upd(t1, idx[1], 5); upd(t2, idx[2], 5); upd(t3, idx[3], 5);
-        upd(t4, idx[4], 5); upd(t5, idx[5], 4); upd(t6, idx[6], 4);
+        upd(t4, idx[4], 4); upd(t5, idx[5], 3); upd(t6, idx[6], 3);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;

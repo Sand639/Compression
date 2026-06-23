@@ -1,0 +1,92 @@
+# .github/workflows/compress-improve.yml
+# 圧縮プログラムを「あなたのサブスク枠」で自律改良する定期ジョブ。
+# - 6時間ごとに1セッション走らせる（= 5時間制限のリセット周期に近い）
+# - 制限やジョブ時間切れで途中終了しても、git に成果が残り、次回が続きから再開する
+# - 認証はサブスクの OAuth トークン（API課金なし）。事前に `claude setup-token` で発行して
+#   リポジトリの Secret `CLAUDE_CODE_OAUTH_TOKEN` に登録しておくこと（手順は SETUP を参照）。
+
+name: compress-improve
+
+on:
+  workflow_dispatch: {}          # 手動でも回せる（Actionsタブから Run workflow）
+  schedule:
+    - cron: '0 */6 * * *'        # 6時間ごと（UTC）。回数を抑えたいなら間隔を広げる
+
+permissions:
+  contents: write                # 改良結果(bwt.cpp等)をコミット&プッシュするため
+
+concurrency:
+  group: compress-improve
+  cancel-in-progress: false      # 二重起動防止：前のセッションが終わるまで重ねない
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330         # GitHubのジョブ上限は360分(6h)。少し下げて安全に
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 停止スイッチ：リポジトリ直下に STOP ファイルがあれば何もせず終了する
+      - name: Check stop switch
+        id: stop
+        run: |
+          if [ -f STOP ]; then
+            echo "STOP file found; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.stop.outputs.skip == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install build tools + Claude Code CLI
+        if: steps.stop.outputs.skip == 'false'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ git
+          npm install -g @anthropic-ai/claude-code
+          claude --version || true
+
+      - name: Run one autonomous improvement session
+        if: steps.stop.outputs.skip == 'false'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          # プロンプト本体は .github/compress_prompt.md に置いておく
+          # 制限/時間切れで非ゼロ終了しても、ここで止めずに後続のコミット段へ進む
+          set +e
+          claude -p "$(cat .github/compress_prompt.md)" \
+            --dangerously-skip-permissions \
+            --max-turns 300
+          echo "claude exit code: $?"
+          set -e
+
+      - name: Commit & push improvements
+        if: steps.stop.outputs.skip == 'false'
+        run: |
+          git config user.name  "compress-bot"
+          git config user.email "compress-bot@users.noreply.github.com"
+          # Claude がセッション中にコミット済みなら push だけで成果が残る。
+          # 取りこぼした未コミット変更があればここで拾う（保険）。
+          git add -A
+          git commit -m "auto: improvement session $(date -u +%FT%TZ)" || echo "nothing extra to commit"
+          git push || echo "nothing to push"
+
+      # 成果物(output.enc / 進捗ログ)を毎回アーティファクトとして保存（任意）
+      - name: Upload artifacts
+        if: steps.stop.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compress-result-${{ github.run_number }}
+          path: |
+            output.enc
+            PROGRESS_COMPRESS.md
+            LEDGER.md
+          if-no-files-found: ignore

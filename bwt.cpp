@@ -1074,7 +1074,7 @@ struct CMModel {
         apm2Wt = s2 & 127; int j2 = s2 >> 7;
         apm2Idx = apm2Ctx * 33 + j2;
         int ap2 = (apm2[apm2Idx] * (128 - apm2Wt) + apm2[apm2Idx + 1] * apm2Wt) >> 11;
-        prf = (prf + 3 * ap2) >> 2;
+        prf = (prf + ap2) >> 1;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         return prf;
     }

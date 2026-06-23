@@ -1010,19 +1010,24 @@ struct CMModel {
     std::vector<uint32_t> matchTab;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
-    std::vector<uint16_t> apm;                     // 二次推定 (256 文脈 x 33 点)
+    std::vector<uint16_t> apm;                     // 一次推定 (256 文脈 x 33 点)
+    std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 33 点、別文脈)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t cx[7] = {0,0,0,0,0,0,0};              // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0;
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
+    int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048),
                 matchTab(SM, 0), w(256 * NIN, 1 << 14),
-                apm(256 * 33) {
+                apm(256 * 33), apm2(256 * 33) {
         for (int i = 0; i < 256; ++i)
-            for (int j = 0; j < 33; ++j)
-                apm[i * 33 + j] = static_cast<uint16_t>(CM_squash((j - 16) * 128) * 16);
+            for (int j = 0; j < 33; ++j) {
+                uint16_t v = static_cast<uint16_t>(CM_squash((j - 16) * 128) * 16);
+                apm[i * 33 + j] = v;
+                apm2[i * 33 + j] = v;
+            }
     }
 
     int predict() {
@@ -1056,12 +1061,20 @@ struct CMModel {
         for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
-        // APM (二次推定): mixer 出力を文脈 (直前バイト) で補正
+        // APM1: mixer 出力を文脈 (直前バイト mc) で補正
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
         int wt = s & 127, j = s >> 7;
         apmIdx = mc * 33 + j;
         int ap = (apm[apmIdx] * (128 - wt) + apm[apmIdx + 1] * wt) >> 11;   // 12bit
         prf = (pr0 + 3 * ap) >> 2;
+        if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
+        // APM2: prf を 2次文脈 (直前バイト XOR 2つ前バイト) でさらに補正
+        apm2Ctx = (mc ^ static_cast<int>(cx[2] & 0xFF)) & 0xFF;
+        int s2 = CM_STR.v[prf] + 2048;
+        apm2Wt = s2 & 127; int j2 = s2 >> 7;
+        apm2Idx = apm2Ctx * 33 + j2;
+        int ap2 = (apm2[apm2Idx] * (128 - apm2Wt) + apm2[apm2Idx + 1] * apm2Wt) >> 11;
+        prf = (prf + 3 * ap2) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         return prf;
     }
@@ -1072,9 +1085,12 @@ struct CMModel {
             wi += (st[i] * err) >> 10;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
         }
-        int g = bit << 16;                          // APM 更新
+        int g = bit << 16;                          // APM1 更新
         apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));
         apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> 7));
+        // APM2 更新
+        apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> 7));
+        apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 7));
         auto upd = [&](std::vector<uint16_t>& t, int ix) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> 5)); };
         upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]); upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]);
         c0 = (c0 << 1) | bit; ++bitpos;

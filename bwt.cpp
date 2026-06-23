@@ -1093,8 +1093,8 @@ struct CMModel {
         apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));
         apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> 7));
         // APM2 更新
-        apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> 8));
-        apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 8));
+        apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> 7));
+        apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 7));
         auto upd  = [&](std::vector<uint16_t>& t, int ix, int sh) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> sh)); };
         upd(t0, idx[0], 5); upd(t1, idx[1], 3); upd(t2, idx[2], 3); upd(t3, idx[3], 3);
         upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3); upd(t7, idx[7], 3);

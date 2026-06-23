@@ -1068,8 +1068,8 @@ struct CMModel {
         int ap = (apm[apmIdx] * (128 - wt) + apm[apmIdx + 1] * wt) >> 11;   // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
-        // APM2: prf を 2次文脈 (直前バイト XOR 2つ前バイト) でさらに補正
-        apm2Ctx = (mc ^ static_cast<int>(cx[2] & 0xFF)) & 0xFF;
+        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位8bit) でさらに補正
+        apm2Ctx = static_cast<int>((cx[2] * 0x9E3779B1u) >> 24);
         int s2 = CM_STR.v[prf] + 2048;
         apm2Wt = s2 & 127; int j2 = s2 >> 7;
         apm2Idx = apm2Ctx * 33 + j2;

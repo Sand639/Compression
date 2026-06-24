@@ -1049,7 +1049,7 @@ struct CMModel {
     std::vector<uint16_t> apm;                     // 一次推定 (8192 文脈 x 65 点、match強度付き)
     std::vector<uint16_t> apm2;                    // 二次推定 (2048 文脈 x 65 点、bitpos付き)
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
-    std::vector<uint16_t> apm4;                    // 四次推定 (256 文脈 x 65 点、cx[3]ハッシュ)
+    std::vector<uint16_t> apm4;                    // 四次推定 (2048 文脈 x 65 点、cx[3]ハッシュ+bitpos)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
     uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 第3マッチモデル (8バイトハッシュ)
@@ -1071,7 +1071,7 @@ struct CMModel {
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
-                apm(8192 * 65), apm2(2048 * 65), apm3(512 * 65), apm4(256 * 65) {
+                apm(8192 * 65), apm2(2048 * 65), apm3(512 * 65), apm4(2048 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1079,7 +1079,7 @@ struct CMModel {
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
         for (int i = 0; i < 2048; ++i)
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
-        for (int i = 0; i < 256; ++i)
+        for (int i = 0; i < 2048; ++i)
             for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
         for (int i = 0; i < 512; ++i)
             for (int j = 0; j < 65; ++j)
@@ -1197,8 +1197,8 @@ struct CMModel {
             prf = (prf + ap3) >> 1;
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         }
-        // APM4: prf を cx[3]ハッシュ上位8bit でさらに補正 (65点補間)
-        apm4Ctx = static_cast<int>((cx[3] * 0x9E3779B1u) >> 24);
+        // APM4: prf を cx[3]ハッシュ上位8bit+bitpos でさらに補正 (65点補間)
+        apm4Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // 2048文脈
         {
             int s4 = CM_STR.v[prf] + 2048;
             apm4Wt = s4 & 63; int j4 = s4 >> 6;

@@ -27,10 +27,10 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
   payload 合計 + 180 B(アーカイブヘッダ) = output.enc サイズ。**最終合否は必ず bwt.exe で確認**。
 
 ## 現在の BEST スコア (本物 5 ファイル)
-**1,211,132 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 429,704 B 上回る (7zより26.2%小)。
-(local-baseline 1,306,118 から -94,986)
-内訳: exe 427,138 [BCJ+CM] / wav 269,467 [WAV+CM] / txt 227,773 [CM] / hal 227,160 [BMP+CM] / yuuki 59,414 [WAV+CM]
-(iteration 28: APM1 8192文脈 + APM2 2048文脈 → -579 B)
+**1,210,968 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 429,868 B 上回る (7zより26.2%小)。
+(local-baseline 1,306,118 から -95,150)
+内訳: exe 427,240 [BCJ+CM] / wav 269,427 [WAV+CM] / txt 227,714 [CM] / hal 227,014 [BMP+CM] / yuuki 59,393 [WAV+CM]
+(iteration 29: APM4 2048文脈(cx[3]+bitpos) → -164 B)
 
 > 注: 旧 PROGRESS の 543,360 / 624,073 は **壊れたデータ(explosion.wav 118B, TeraPad.exe 欠落)**
 > 上の無効値。本物 5 ファイルで測り直したのが上記。
@@ -98,6 +98,7 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
 | +26 | 1,211,772 | WAV スパース文脈刻み 3->2 | -177 |
 | +27 | 1,211,711 | exe sub-mixer subShift 16->15 | -61 |
 | +28 | 1,211,132 | APM1 8192文脈(match強度ms追加) + APM2 2048文脈(bitpos追加) | -579 |
+| +29 | 1,210,968 | APM4 256→2048文脈(cx[3]+bitpos) | -164 |
 
 失敗(revert): order-9文脈(+2,004希釈) / match StateMap(+1,167) / SM=1<<26(+367) /
 mixerバイアス入力(+592) / LPC次数24・32(係数増) / WAV BS 2048/16384 / 最終mixer文脈にprevByte(+1,561希釈) /

@@ -2238,6 +2238,14 @@ static int PngPredict(int f, int a, int b, int c) {
     }
 }
 
+// MED (JPEG-LS / LOCO-I の中央値エッジ検出予測): a(左) b(上) c(左上) からエッジを推定。
+static int MedPredict(int a, int b, int c) {
+    int mx = a > b ? a : b, mn = a < b ? a : b;
+    if (c >= mx) return mn;
+    if (c <= mn) return mx;
+    return a + b - c;
+}
+
 // GAP (Gradient Adaptive Predictor, CALIC 系)。周辺画素 (同一チャンネル, bpp ストライド)
 // W/WW/N/NW/NE/NN の勾配から適応的に予測。近傍は復元済み = 原データなので可逆。
 // 返り値は int (mod 256 で残差化されるので範囲制限は不要)。
@@ -2335,7 +2343,7 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
 
     std::vector<uint8_t> ftypes(rows);
     std::vector<uint8_t> resid(rows * stride);
-    const int NUM_FILT = 6;                          // 0-4: PNG, 5: GAP
+    const int NUM_FILT = 7;                          // 0-4: PNG, 5: GAP, 6: MED
     std::vector<uint8_t> tmp[NUM_FILT];
     for (int f = 0; f < NUM_FILT; ++f) tmp[f].resize(stride);
 
@@ -2348,13 +2356,13 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
             long cost = 0;
             for (size_t x = 0; x < stride; ++x) {
                 int pred;
-                if (f < 5) {
+                if (f == 5) {
+                    pred = GapPredict(row, prow, prow2, x, stride, bpp);
+                } else {
                     int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
                     int b = prow ? prow[x] : 0;
                     int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
-                    pred = PngPredict(f, a, b, c);
-                } else {
-                    pred = GapPredict(row, prow, prow2, x, stride, bpp);
+                    pred = (f < 5) ? PngPredict(f, a, b, c) : MedPredict(a, b, c);
                 }
                 uint8_t res = static_cast<uint8_t>(row[x] - pred);
                 tmp[f][x] = res;
@@ -2399,13 +2407,13 @@ std::vector<uint8_t> Decode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
         const uint8_t* prow2 = (r > 1) ? pix.data() + (r - 2) * stride : nullptr;
         for (size_t x = 0; x < stride; ++x) {
             int pred;
-            if (f < 5) {
+            if (f == 5) {
+                pred = GapPredict(row, prow, prow2, x, stride, bpp);
+            } else {
                 int a = (x >= static_cast<size_t>(bpp)) ? row[x - bpp] : 0;
                 int b = prow ? prow[x] : 0;
                 int c = (prow && x >= static_cast<size_t>(bpp)) ? prow[x - bpp] : 0;
-                pred = PngPredict(f, a, b, c);
-            } else {
-                pred = GapPredict(row, prow, prow2, x, stride, bpp);
+                pred = (f < 5) ? PngPredict(f, a, b, c) : MedPredict(a, b, c);
             }
             row[x] = static_cast<uint8_t>(resid[r * stride + x] + pred);
         }

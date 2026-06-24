@@ -1020,7 +1020,8 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 // ファイル種別ごとの CM パラメータ束 (rate プロファイル + ミキサー学習シフト)。
 // algo バイト由来で決まるので encode/decode で一致し完全可逆。
 struct CMProfile { const int* rate; int mixShift; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 12 };   // 定常: txt/bmp 系
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11 };   // テキスト (CM): 速めの mixer
+static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12 };   // 画像 (BMP_CM): 遅めの mixer
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 11 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11 };   // 音声 (WAV_CM)
 
@@ -2471,8 +2472,8 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_CM(Encode_BCJ(in), CM_PROF_FAST);
         case ALGO_WAV_CM:                                      // WAV 残差 -> CM (WAV プロファイル)
             return Encode_CM(Encode_Wav_MidSide_Delta(in), CM_PROF_WAV);
-        case ALGO_BMP_CM:                                      // BMP 残差 -> CM
-            return Encode_CM(Encode_Bmp_2DPredict(in));
+        case ALGO_BMP_CM:                                      // BMP 残差 -> CM (BMP プロファイル)
+            return Encode_CM(Encode_Bmp_2DPredict(in), CM_PROF_BMP);
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
             return Encode_CM(BmpSeparateChannels(Encode_Bmp_2DPredict(in)));
         default:         return in;
@@ -2502,8 +2503,8 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_BCJ(Decode_CM(in, CM_PROF_FAST));
         case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (WAV プロファイル)
             return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_WAV));
-        case ALGO_BMP_CM:                                      // 逆順: CM -> BMP
-            return Decode_Bmp_2DPredict(Decode_CM(in));
+        case ALGO_BMP_CM:                                      // 逆順: CM -> BMP (BMP プロファイル)
+            return Decode_Bmp_2DPredict(Decode_CM(in, CM_PROF_BMP));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
             return Decode_Bmp_2DPredict(BmpJoinChannels(Decode_CM(in)));
         default:         return in;

@@ -1034,7 +1034,9 @@ struct CMModel {
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab, matchTab2;
     std::vector<uint8_t> buf;
-    std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
+    std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
+    std::vector<int> w2;                           // 第2 mixer 重み (order-2 文脈 x NIN)
+    int mix2Ctx = 0;
     std::vector<uint16_t> apm;                     // 一次推定 (2048 文脈 x 65 点)
     std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 65 点、別文脈)
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
@@ -1054,7 +1056,7 @@ struct CMModel {
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(2048 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         rate = prof.rate; mixShift = prof.mixShift;
         uint16_t initv[65];
@@ -1123,9 +1125,14 @@ struct CMModel {
         mc_ext = mc * 8 + bitpos;
         int ms = matchLen == 0 ? 0 : (matchLen < 8 ? 1 : (matchLen < 32 ? 2 : 3));
         mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
-        long long dot = 0;
-        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mixCtx * NIN + i]) * st[i];
-        pr0 = CM_squash(static_cast<int>(dot >> 16));
+        mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-2 文脈
+        long long dot = 0, dot2 = 0;
+        for (int i = 0; i < NIN; ++i) {
+            dot  += static_cast<long long>(w [mixCtx  * NIN + i]) * st[i];
+            dot2 += static_cast<long long>(w2[mix2Ctx * NIN + i]) * st[i];
+        }
+        // 2つの mixer をロジット領域で平均 (異なる文脈グルーピングのアンサンブル)
+        pr0 = CM_squash(static_cast<int>(((dot >> 16) + (dot2 >> 16)) >> 1));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
         // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置) で補正 (65点補間)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
@@ -1164,11 +1171,14 @@ struct CMModel {
         return prf;
     }
     void update(int bit) {
-        int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
+        int err = (bit << 12) - pr0;                // 両 mixer は最終出力誤差で学習
         for (int i = 0; i < NIN; ++i) {
             int& wi = w[mixCtx * NIN + i];
             wi += (st[i] * err) >> mixShift;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
+            int& wi2 = w2[mix2Ctx * NIN + i];
+            wi2 += (st[i] * err) >> mixShift;
+            if (wi2 < -(1 << 20)) wi2 = -(1 << 20); else if (wi2 > (1 << 20)) wi2 = (1 << 20);
         }
         int g = bit << 16;                          // APM1 更新
         apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));

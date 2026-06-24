@@ -1007,7 +1007,7 @@ struct BinaryRangeDecoder {
 // algo バイトはアーカイブに保存され復号も同じ algo を見るため、プロファイル選択は完全可逆。
 static const int CM_RATE_SLOW[16] = {
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
-     6898,  6241,  5698,  5242,  4854,  4520, 4228, 3972
+     6898,  6241,  5698,  5242,  4854,  4520, 4096, 3641
 };
 static const int CM_RATE_FAST[16] = {
     43690, 26214, 18724, 16384, 16384, 16384, 16384, 16384,
@@ -1049,7 +1049,7 @@ struct CMModel {
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         rate = prof.rate; mixShift = prof.mixShift;
         uint16_t initv[65];
@@ -1116,7 +1116,8 @@ struct CMModel {
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
-        mixCtx = mc_ext * 2 + (matchLen > 0 ? 1 : 0);   // match-active で別重み集合
+        int ms = matchLen == 0 ? 0 : (matchLen < 8 ? 1 : (matchLen < 32 ? 2 : 3));
+        mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
         long long dot = 0;
         for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mixCtx * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));

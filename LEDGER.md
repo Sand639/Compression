@@ -1,6 +1,13 @@
 # 改良台帳
 
-## ベースライン
+## ★ local-baseline (本物5ファイル, 2026-06-24) — 現行の唯一有効な基準
+- **スコア**: 1,306,118 bytes (output.enc, 5ファイル)。round-trip 5/5 exact, 7z を 334,718 B 上回る。
+- 内訳: TeraPad.exe BCJ+CM 492,658 / explosion.wav WAV+CM 270,125 / wagahaiwa.txt CM 244,659 /
+  hal.bmp BMP+CM 236,441 / yuuki_256.bmp CM 62,055。全ファイル CM バックエンド。
+- 計測: `measure.exe`(3秒並列スクリーニング) + 最終 `bwt.exe`(400秒, 可逆性ゲート)。
+- 以下の旧 GitHub 時代の数値 (624,073 / 543,360) は壊れたデータ上の無効値。記録のみ残す。
+
+## (旧・無効) ベースライン
 - **スコア**: 624,073 bytes
 - **日時**: 初期計測
 

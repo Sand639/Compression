@@ -74,6 +74,10 @@ CMakeUserPresets.json
 **/[Rr]eleases/
 **/[Ii]nterm*/     # Intermediate 等
 
+# 計測用の使い捨てハーネス (コミットしない)
+measure.cpp
+measure_*.cpp
+
 # Windows のおまけ & ダンプ
 Thumbs.db
 Desktop.ini

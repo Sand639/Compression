@@ -1013,6 +1013,11 @@ static const int CM_RATE_FAST[16] = {
     43690, 26214, 18724, 16384, 16384, 16384, 16384, 16384,
     16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384
 };
+// ファイル種別ごとの CM パラメータ束 (rate プロファイル + ミキサー学習シフト)。
+// algo バイト由来で決まるので encode/decode で一致し完全可逆。
+struct CMProfile { const int* rate; int mixShift; };
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 12 };   // 定常: txt/bmp 系
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 11 };   // 非定常: exe/wav 系
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
@@ -1039,13 +1044,14 @@ struct CMModel {
     int apm3Idx = 0, apm3Wt = 0;
     int apm4Ctx = 0, apm4Idx = 0, apm4Wt = 0;
     const int* rate = CM_RATE_SLOW;                // 適応カウンタ学習レートのプロファイル
+    int mixShift = 12;                             // ミキサー学習レート (プロファイル依存)
 
-    CMModel(const int* rateProfile = CM_RATE_SLOW)
+    CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
-        rate = rateProfile;
+        rate = prof.rate; mixShift = prof.mixShift;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 2048; ++i)
@@ -1155,7 +1161,7 @@ struct CMModel {
         int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
         for (int i = 0; i < NIN; ++i) {
             int& wi = w[mixCtx * NIN + i];
-            wi += (st[i] * err) >> 12;
+            wi += (st[i] * err) >> mixShift;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
         }
         int g = bit << 16;                          // APM1 更新
@@ -1211,11 +1217,11 @@ struct CMModel {
     }
 };
 
-std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const int* rate = CM_RATE_SLOW) {
+std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW) {
     std::vector<uint8_t> out;
     PutU64(out, static_cast<uint64_t>(input.size()));
     if (input.empty()) return out;
-    CMModel cm(rate);
+    CMModel cm(prof);
     BinaryRangeEncoder enc(out);
     for (uint8_t B : input) {
         for (int k = 7; k >= 0; --k) {
@@ -1228,13 +1234,13 @@ std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const int* rat
     enc.flush();
     return out;
 }
-std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const int* rate = CM_RATE_SLOW) {
+std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW) {
     if (input.size() < 8) return {};
     uint64_t n = GetU64(input.data());
     std::vector<uint8_t> out;
     if (n == 0) return out;
     out.reserve(static_cast<size_t>(n));
-    CMModel cm(rate);
+    CMModel cm(prof);
     BinaryRangeDecoder dec(input.data() + 8, input.size() - 8);
     for (uint64_t i = 0; i < n; ++i) {
         int B = 0;
@@ -2386,10 +2392,10 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_Entropy(in);
         case ALGO_CM:                                          // 生データ -> コンテキストミキシング
             return Encode_CM(in);
-        case ALGO_BCJ_CM:                                      // BCJ -> CM (非定常: FAST レート)
-            return Encode_CM(Encode_BCJ(in), CM_RATE_FAST);
-        case ALGO_WAV_CM:                                      // WAV 残差 -> CM (非定常: FAST レート)
-            return Encode_CM(Encode_Wav_MidSide_Delta(in), CM_RATE_FAST);
+        case ALGO_BCJ_CM:                                      // BCJ -> CM (非定常: FAST プロファイル)
+            return Encode_CM(Encode_BCJ(in), CM_PROF_FAST);
+        case ALGO_WAV_CM:                                      // WAV 残差 -> CM (非定常: FAST プロファイル)
+            return Encode_CM(Encode_Wav_MidSide_Delta(in), CM_PROF_FAST);
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM
             return Encode_CM(Encode_Bmp_2DPredict(in));
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
@@ -2417,10 +2423,10 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Entropy(in);
         case ALGO_CM:                                          // CM 直掛けの逆
             return Decode_CM(in);
-        case ALGO_BCJ_CM:                                      // 逆順: CM -> BCJ (FAST レート)
-            return Decode_BCJ(Decode_CM(in, CM_RATE_FAST));
-        case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (FAST レート)
-            return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_RATE_FAST));
+        case ALGO_BCJ_CM:                                      // 逆順: CM -> BCJ (FAST プロファイル)
+            return Decode_BCJ(Decode_CM(in, CM_PROF_FAST));
+        case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (FAST プロファイル)
+            return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_FAST));
         case ALGO_BMP_CM:                                      // 逆順: CM -> BMP
             return Decode_Bmp_2DPredict(Decode_CM(in));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP

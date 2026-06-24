@@ -1001,11 +1001,17 @@ struct BinaryRangeDecoder {
     }
 };
 
-// 適応カウンタの学習レート (16.16 固定小数): CM_RATE[n] = round(131072/(2n+3)) ~= 1/(n+1.5)
-// 新しい文脈は速く(>>1相当)、観測が増えるほど遅く(n=15で~>>4)収束する。
-static const int CM_RATE[16] = {
+// 適応カウンタの学習レート (16.16 固定小数, 1/(n+α)相当)。ファイル種別ごとにプロファイルを選ぶ:
+//   SLOW = 低い床(~1/16): 定常的なテキスト/画像向け (CM, BMP_CM)。
+//   FAST = 高い床(~1/5):  非定常な exe/音声残差向け (BCJ_CM, WAV_CM)。
+// algo バイトはアーカイブに保存され復号も同じ algo を見るため、プロファイル選択は完全可逆。
+static const int CM_RATE_SLOW[16] = {
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      6898,  6241,  5698,  5242,  4854,  4520, 4228, 3972
+};
+static const int CM_RATE_FAST[16] = {
+    43690, 26214, 18724, 16384, 16384, 16384, 16384, 16384,
+    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384
 };
 
 // CM 予測モデル (encode/decode 共通)
@@ -1032,11 +1038,14 @@ struct CMModel {
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
     int apm3Idx = 0, apm3Wt = 0;
     int apm4Ctx = 0, apm4Idx = 0, apm4Wt = 0;
+    const int* rate = CM_RATE_SLOW;                // 適応カウンタ学習レートのプロファイル
 
-    CMModel() : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
+    CMModel(const int* rateProfile = CM_RATE_SLOW)
+              : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
+        rate = rateProfile;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 2048; ++i)
@@ -1165,7 +1174,7 @@ struct CMModel {
         auto upd  = [&](std::vector<uint16_t>& t, int ix) {
             uint16_t e = t[ix];
             int n = e & 15, pr = e >> 4;
-            pr += (((tgt - pr) * CM_RATE[n]) >> 16);
+            pr += (((tgt - pr) * rate[n]) >> 16);
             if (pr < 0) pr = 0; else if (pr > 4095) pr = 4095;
             if (n < 15) ++n;
             t[ix] = static_cast<uint16_t>((pr << 4) | n);
@@ -1202,11 +1211,11 @@ struct CMModel {
     }
 };
 
-std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input) {
+std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const int* rate = CM_RATE_SLOW) {
     std::vector<uint8_t> out;
     PutU64(out, static_cast<uint64_t>(input.size()));
     if (input.empty()) return out;
-    CMModel cm;
+    CMModel cm(rate);
     BinaryRangeEncoder enc(out);
     for (uint8_t B : input) {
         for (int k = 7; k >= 0; --k) {
@@ -1219,13 +1228,13 @@ std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input) {
     enc.flush();
     return out;
 }
-std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input) {
+std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const int* rate = CM_RATE_SLOW) {
     if (input.size() < 8) return {};
     uint64_t n = GetU64(input.data());
     std::vector<uint8_t> out;
     if (n == 0) return out;
     out.reserve(static_cast<size_t>(n));
-    CMModel cm;
+    CMModel cm(rate);
     BinaryRangeDecoder dec(input.data() + 8, input.size() - 8);
     for (uint64_t i = 0; i < n; ++i) {
         int B = 0;
@@ -2377,10 +2386,10 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_Entropy(in);
         case ALGO_CM:                                          // 生データ -> コンテキストミキシング
             return Encode_CM(in);
-        case ALGO_BCJ_CM:                                      // BCJ -> CM
-            return Encode_CM(Encode_BCJ(in));
-        case ALGO_WAV_CM:                                      // WAV 残差 -> CM
-            return Encode_CM(Encode_Wav_MidSide_Delta(in));
+        case ALGO_BCJ_CM:                                      // BCJ -> CM (非定常: FAST レート)
+            return Encode_CM(Encode_BCJ(in), CM_RATE_FAST);
+        case ALGO_WAV_CM:                                      // WAV 残差 -> CM (非定常: FAST レート)
+            return Encode_CM(Encode_Wav_MidSide_Delta(in), CM_RATE_FAST);
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM
             return Encode_CM(Encode_Bmp_2DPredict(in));
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
@@ -2408,10 +2417,10 @@ static std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_
             return Decode_Entropy(in);
         case ALGO_CM:                                          // CM 直掛けの逆
             return Decode_CM(in);
-        case ALGO_BCJ_CM:                                      // 逆順: CM -> BCJ
-            return Decode_BCJ(Decode_CM(in));
-        case ALGO_WAV_CM:                                      // 逆順: CM -> WAV
-            return Decode_Wav_MidSide_Delta(Decode_CM(in));
+        case ALGO_BCJ_CM:                                      // 逆順: CM -> BCJ (FAST レート)
+            return Decode_BCJ(Decode_CM(in, CM_RATE_FAST));
+        case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (FAST レート)
+            return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_RATE_FAST));
         case ALGO_BMP_CM:                                      // 逆順: CM -> BMP
             return Decode_Bmp_2DPredict(Decode_CM(in));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
@@ -2659,7 +2668,9 @@ static bool RunSelfTests() {
     all &= RunSuite("RangeCoder o0",        Encode_RangeCoder,   Decode_RangeCoder);
     all &= RunSuite("RangeCoder o1",        Encode_RangeCoderO1, Decode_RangeCoderO1);
     all &= RunSuite("RangeCoder o2",        Encode_RangeCoderO2, Decode_RangeCoderO2);
-    all &= RunSuite("CM",                   Encode_CM,           Decode_CM);
+    all &= RunSuite("CM",
+                    [](const std::vector<uint8_t>& v){ return Encode_CM(v); },
+                    [](const std::vector<uint8_t>& v){ return Decode_CM(v); });
     all &= RunSuite("Entropy(o0/o1)",       Encode_Entropy,      Decode_Entropy);
     all &= RunSuite("LZSS",                 Encode_LZSS_Greedy,  Decode_LZSS);
     all &= RunSuite("LZSS-opt",             Encode_LZSS_Optimal, Decode_LZSS);

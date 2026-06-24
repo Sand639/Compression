@@ -12,11 +12,11 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
   payload 合計 + 180 B(アーカイブヘッダ) = output.enc サイズ。**最終合否は必ず bwt.exe で確認**。
 
 ## 現在の BEST スコア (本物 5 ファイル)
-**1,223,603 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 417,233 B 上回る (7zより25.4%小)。
-(local-baseline 1,306,118 から -82,515)
-内訳: exe 431,358 [BCJ+CM] / wav 269,725 [WAV+CM] / hal 234,570 [BMP+CM] / txt 228,267 [CM] / yuuki 59,503 [WAV+CM]
+**1,211,711 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 429,125 B 上回る (7zより26.2%小)。
+(local-baseline 1,306,118 から -94,407)
+内訳: exe 427,226 [BCJ+CM] / wav 269,564 [WAV+CM] / txt 227,905 [CM] / hal 227,349 [BMP+CM] / yuuki 59,487 [WAV+CM]
 注: CM 強化で yuuki の勝者が CM->WAV+CM にフリップ。measure.exe は yuuki=min(CM,WAV)で実機一致。
-(実機 BEST は iteration 18 で 1,223,780 を確認済。19 は harness 予測 1,223,603)
+(実機確認: iteration 26 で 1,211,772。27 は subShift15 で -61 の harness 予測)
 
 > 注: 旧 PROGRESS の 543,360 / 624,073 は **壊れたデータ(explosion.wav 118B, TeraPad.exe 欠落)**
 > 上の無効値。本物 5 ファイルで測り直したのが上記。
@@ -32,23 +32,24 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
 
 **全 5 ファイルが CM をバックエンドに採用** → 共有 CM モデルの改良が最大レバレッジ。
 
-## CMModel 現構成 (iteration 19)
-- NIN = 13: order0..8, stride3, match(4B), match2(6B), match3(8B)
+## CMModel 現構成 (iteration 27)
+- NIN = 13: order0..8, stride(sparse), match(4B), match2(6B), match3(8B)
 - 各テーブル要素 = (prob<<4)|count, 学習レートは count と CMProfile で可変
-- TBITS = 27 (128M entries) for t2..t9 / SM = 1<<24 for matchTab×3
-- **2層ミキサー**: sub-mixer 4本 (order-1[+match強度]/2/3/4文脈) を、bitpos*4+match強度
-  文脈の学習最終合成器(>>14)で合成
-- **CMProfile (algo由来で可逆) — rate床 / mixShift / apmShift / subShift**:
-  - SLOW(txt): 床2849 / 11 / 8 / 24
-  - BMP(hal):  床2849 / 12 / 8 / 24
-  - FAST(exe): 床15000 / 10 / 7 / **16(細粒度: 524288文脈)**
-  - WAV(wav,yuuki): 床8192 / 11 / 7 / 24
+- t2..t9 は CMProfile.tbits (exe=28/256M, 他=27/128M) / matchTab×3 = SM=1<<24
+- **2層ミキサー**: sub-mixer 4本 (order-1[+match強度]/2/3/4文脈) を bitpos*4+match強度
+  文脈の学習最終合成器(>>14)で合成。sub-mixer文脈の細かさは subShift で可変
+- **CMProfile (algo由来で可逆) — rate床 / mixShift / apmShift / subShift / strideLen / tbits**:
+  - SLOW(txt):       2849 / 11 / 8 / 24 / 2 / 27
+  - BMP(hal):        2849 / 12 / 8 / 24 / 3 / 27
+  - FAST(exe):      15000 / 10 / 7 / 15 / 2 / 28
+  - WAV(wav,yuuki):  8192 / 11 / 7 / 24 / 2 / 27
+- BMP予測: PNG0-4 + GAP + **MED(JPEG-LS)**, 行別選択(log2コスト) + カラー変換(B-=G,R-=G)
+- BCJ = LZMA SDK x86 フィルタ
 - APM1-4 カスケード (saturated)
 
-## 次に試す候補 (ほぼ頭打ち)
-- hal.bmp 2D予測器/カラー変換の改善 (8bit modular制約で難)
-- exe 用 t-table を per-profile で TBITS=28 (4.3GB/model, 効果逓減)
-- match信頼度の式チューニング
+## 状況: ほぼ頭打ち (頭打ち=連続失敗で判断)
+- 残差: WAV FLAC風ステレオモード選択(複雑・効果不確実) のみ未着手の大型レバー
+- 細粒度subShiftの更なる前進は逓減(メモリ倍増で~-40)。複数の別案は失敗(上記)
 
 ## スコア履歴 (本セッション = local-baseline 以降)
 | # | スコア | 手法 | 変化量 |
@@ -74,7 +75,17 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
 | +17 | 1,227,732 | 適応カウンタ床の再調整 | -204 |
 | +18 | 1,223,780 | sub-mixer文脈をプロファイル別細粒度化(exe subShift16) | -3,952 |
 | +19 | 1,223,603 | 第3マッチモデル(8Bハッシュ) | -177 |
+| +20 | 1,220,759 | スパース文脈刻みをプロファイル別(exe stride4) | -2,844 |
+| +21 | 1,213,595 | **BMP に MED予測(JPEG-LS)追加** | **-7,164** |
+| +22 | 1,213,067 | 文脈テーブルをプロファイル別(exe TBITS28) | -528 |
+| +23 | 1,213,010 | BMP行フィルタ選択を log2(1+\|res\|) コストへ | -57 |
+| +24 | 1,212,311 | exe スパース文脈刻み 4->2 (word整列) | -699 |
+| +25 | 1,211,949 | text スパース文脈刻み 3->2 | -362 |
+| +26 | 1,211,772 | WAV スパース文脈刻み 3->2 | -177 |
+| +27 | 1,211,711 | exe sub-mixer subShift 16->15 | -61 |
 
 失敗(revert): order-9文脈(+2,004希釈) / match StateMap(+1,167) / SM=1<<26(+367) /
 mixerバイアス入力(+592) / LPC次数24・32(係数増) / WAV BS 2048/16384 / 最終mixer文脈にprevByte(+1,561希釈) /
-sub-mixer文脈を全プロファイル細粒度化(小ファイル悪化→exe専用に分離して解決)
+sub-mixer文脈を全プロファイル細粒度化(小ファイル悪化→exe専用に分離して解決) /
+sparse文脈4タップ(+1,841) / BMPカラー変換G->輝度(+3,531) / exe最終mixerにprevByte fmBits(+945) /
+match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,665, bpp=3整列が最適)

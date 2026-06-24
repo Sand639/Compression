@@ -2349,6 +2349,10 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     std::vector<uint8_t> tmp[NUM_FILT];
     for (int f = 0; f < NUM_FILT; ++f) tmp[f].resize(stride);
 
+    // フィルタ選択コスト: L1 ではなく log2(1+|残差|) (エントロピー符号化後のビット数に近い)。
+    int bitCost[256];
+    for (int v = 0; v < 256; ++v) { int sv = (v < 128) ? v : v - 256; int a = sv < 0 ? -sv : sv; bitCost[v] = static_cast<int>(std::log2(1.0 + a) * 256.0 + 0.5); }
+
     for (size_t r = 0; r < rows; ++r) {
         const uint8_t* row   = pix + r * stride;
         const uint8_t* prow  = (r > 0) ? pix + (r - 1) * stride : nullptr;
@@ -2368,8 +2372,7 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
                 }
                 uint8_t res = static_cast<uint8_t>(row[x] - pred);
                 tmp[f][x] = res;
-                int sv = (res < 128) ? res : res - 256;       // 符号付きとみなした絶対値和
-                cost += (sv < 0) ? -sv : sv;
+                cost += bitCost[res];                         // log2(1+|残差|) コスト
             }
             if (bestCost < 0 || cost < bestCost) { bestCost = cost; bestF = f; }
         }

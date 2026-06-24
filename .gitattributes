@@ -1,5 +1,9 @@
 * text=auto
 
+*.exe binary
+*.wav binary
+*.bmp binary
+
 # HLSLなどはLFで統一（Git側でもLFに）
 *.hlsl text eol=lf
 *.glsl text eol=lf

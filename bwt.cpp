@@ -1037,8 +1037,10 @@ struct CMModel {
     std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
     std::vector<int> w2;                           // 第2 mixer 重み (order-2 文脈 x NIN)
     std::vector<int> w3;                           // 第3 mixer 重み (order-3 文脈 x NIN)
-    std::vector<int> wf;                           // 最終 mixer (3つの sub-mixer をbitpos毎に学習合成)
-    int mix2Ctx = 0, mix3Ctx = 0, fmCtx = 0, fmLogit[3] = {0,0,0};
+    std::vector<int> w4;                           // 第4 mixer 重み (order-4 文脈 x NIN)
+    std::vector<int> wf;                           // 最終 mixer (sub-mixer をbitpos毎に学習合成)
+    static const int NMIX = 4;
+    int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0};
     std::vector<uint16_t> apm;                     // 一次推定 (2048 文脈 x 65 点)
     std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 65 点、別文脈)
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
@@ -1058,7 +1060,7 @@ struct CMModel {
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(2048 * NIN, 1 << 14), w3(2048 * NIN, 1 << 14), wf(8 * 3, 21845),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(2048 * NIN, 1 << 14), w3(2048 * NIN, 1 << 14), w4(2048 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         rate = prof.rate; mixShift = prof.mixShift;
         uint16_t initv[65];
@@ -1129,20 +1131,22 @@ struct CMModel {
         mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
         mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-2 文脈
         mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-3 文脈
-        long long dot = 0, dot2 = 0, dot3 = 0;
+        mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-4 文脈
+        long long dot = 0, dot2 = 0, dot3 = 0, dot4 = 0;
         for (int i = 0; i < NIN; ++i) {
             dot  += static_cast<long long>(w [mixCtx  * NIN + i]) * st[i];
             dot2 += static_cast<long long>(w2[mix2Ctx * NIN + i]) * st[i];
             dot3 += static_cast<long long>(w3[mix3Ctx * NIN + i]) * st[i];
+            dot4 += static_cast<long long>(w4[mix4Ctx * NIN + i]) * st[i];
         }
-        // 3つの sub-mixer 出力を最終 mixer が bitpos 毎に学習合成 (2層 mixer)
+        // sub-mixer 出力を最終 mixer が bitpos 毎に学習合成 (2層 mixer)
         fmLogit[0] = static_cast<int>(dot >> 16);
         fmLogit[1] = static_cast<int>(dot2 >> 16);
         fmLogit[2] = static_cast<int>(dot3 >> 16);
-        fmCtx = bitpos;
-        long long dotF = static_cast<long long>(wf[fmCtx * 3 + 0]) * fmLogit[0]
-                       + static_cast<long long>(wf[fmCtx * 3 + 1]) * fmLogit[1]
-                       + static_cast<long long>(wf[fmCtx * 3 + 2]) * fmLogit[2];
+        fmLogit[3] = static_cast<int>(dot4 >> 16);
+        fmCtx = bitpos * 4 + ms;                        // bitpos + match強度 で sub-mixer 配分を変える
+        long long dotF = 0;
+        for (int k = 0; k < NMIX; ++k) dotF += static_cast<long long>(wf[fmCtx * NMIX + k]) * fmLogit[k];
         pr0 = CM_squash(static_cast<int>(dotF >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
         // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置) で補正 (65点補間)
@@ -1193,9 +1197,12 @@ struct CMModel {
             int& wi3 = w3[mix3Ctx * NIN + i];
             wi3 += (st[i] * err) >> mixShift;
             if (wi3 < -(1 << 20)) wi3 = -(1 << 20); else if (wi3 > (1 << 20)) wi3 = (1 << 20);
+            int& wi4 = w4[mix4Ctx * NIN + i];
+            wi4 += (st[i] * err) >> mixShift;
+            if (wi4 < -(1 << 20)) wi4 = -(1 << 20); else if (wi4 > (1 << 20)) wi4 = (1 << 20);
         }
-        for (int k = 0; k < 3; ++k) {               // 最終 mixer 更新
-            int& wfk = wf[fmCtx * 3 + k];
+        for (int k = 0; k < NMIX; ++k) {            // 最終 mixer 更新
+            int& wfk = wf[fmCtx * NMIX + k];
             wfk += (fmLogit[k] * err) >> 14;
             if (wfk < -(1 << 18)) wfk = -(1 << 18); else if (wfk > (1 << 18)) wfk = (1 << 18);
         }

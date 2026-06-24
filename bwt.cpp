@@ -1782,28 +1782,61 @@ std::vector<uint8_t> Decode_Delta(const std::vector<uint8_t>& in, int stride) {
 //   CALL が同一バイト列になり、後段 LZSS の一致が激増する。
 //   オペコードバイト自体は書き換えず、両側で同じ走査・スキップを行うため完全可逆。
 // ==========================================================================
+static inline bool Test86MSByte(uint8_t b) { return b == 0x00 || b == 0xFF; }
+
+// LZMA SDK x86 (BCJ) フィルタの忠実な移植。E8/E9 直後 4 バイト相対変位を
+// 絶対アドレスへ (encode) / 相対へ (decode) 変換。上位バイトが 00/FF の
+// 「近接分岐らしい」場合のみ変換し、mask 状態機械で連続 E8/E9 を正しく扱う。
+// data 内のランダムな E8/E9 を誤変換しないため、素朴版より残差が綺麗になる。
 static std::vector<uint8_t> BcjTransform(const std::vector<uint8_t>& in, bool encode) {
-    std::vector<uint8_t> d(in);
-    const size_t n = d.size();
-    size_t i = 0;
-    while (i + 5 <= n) {
-        if (d[i] == 0xE8 || d[i] == 0xE9) {
-            uint32_t v = static_cast<uint32_t>(d[i + 1])
-                       | (static_cast<uint32_t>(d[i + 2]) << 8)
-                       | (static_cast<uint32_t>(d[i + 3]) << 16)
-                       | (static_cast<uint32_t>(d[i + 4]) << 24);
-            uint32_t delta = static_cast<uint32_t>(i + 5);
-            v = encode ? (v + delta) : (v - delta);
-            d[i + 1] = static_cast<uint8_t>(v & 0xFF);
-            d[i + 2] = static_cast<uint8_t>((v >> 8) & 0xFF);
-            d[i + 3] = static_cast<uint8_t>((v >> 16) & 0xFF);
-            d[i + 4] = static_cast<uint8_t>((v >> 24) & 0xFF);
-            i += 5;
+    std::vector<uint8_t> data(in);
+    const size_t size = data.size();
+    if (size < 5) return data;
+    const size_t lim = size - 4;
+    const uint32_t ip = 5;          // 次命令位置オフセット (元コードの ip+=5 相当)
+    uint32_t mask = 0;
+    size_t pos = 0;
+    for (;;) {
+        size_t pp = pos;
+        while (pp < lim && (data[pp] & 0xFE) != 0xE8) pp++;
+        size_t d = pp - pos;
+        pos = pp;
+        if (pp >= lim) break;
+        if (d > 2) {
+            mask = 0;
         } else {
-            i += 1;
+            mask >>= static_cast<unsigned>(d);
+            if (mask != 0 && (mask > 4 || mask == 3 ||
+                              Test86MSByte(data[pos + (mask >> 1) + 1]))) {
+                mask = (mask >> 1) | 4; pos++; continue;
+            }
+        }
+        if (Test86MSByte(data[pos + 4])) {
+            size_t ipos = pos;
+            uint32_t v = (static_cast<uint32_t>(data[ipos + 4]) << 24)
+                       | (static_cast<uint32_t>(data[ipos + 3]) << 16)
+                       | (static_cast<uint32_t>(data[ipos + 2]) << 8)
+                       |  static_cast<uint32_t>(data[ipos + 1]);
+            uint32_t cur = ip + static_cast<uint32_t>(pos);
+            pos += 5;
+            if (encode) v += cur; else v -= cur;
+            if (mask != 0) {
+                unsigned sh = (mask & 6) << 2;
+                if (Test86MSByte(static_cast<uint8_t>(v >> sh))) {
+                    v ^= ((static_cast<uint32_t>(0x100) << sh) - 1);
+                    if (encode) v += cur; else v -= cur;
+                }
+                mask = 0;
+            }
+            data[ipos + 1] = static_cast<uint8_t>(v);
+            data[ipos + 2] = static_cast<uint8_t>(v >> 8);
+            data[ipos + 3] = static_cast<uint8_t>(v >> 16);
+            data[ipos + 4] = static_cast<uint8_t>(0 - ((v >> 24) & 1));
+        } else {
+            mask = (mask >> 1) | 4; pos++;
         }
     }
-    return d;
+    return data;
 }
 std::vector<uint8_t> Encode_BCJ(const std::vector<uint8_t>& in) { return BcjTransform(in, true); }
 std::vector<uint8_t> Decode_BCJ(const std::vector<uint8_t>& in) { return BcjTransform(in, false); }

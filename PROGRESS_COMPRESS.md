@@ -11,8 +11,9 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
   5 ファイルを各々の勝ち方式で **並列**圧縮し payload 合計を出す。約 **3 秒**。
   payload 合計 + 180 B(アーカイブヘッダ) = output.enc サイズ。**最終合否は必ず bwt.exe で確認**。
 
-## 現在の BEST スコア (本物 5 ファイル, local-baseline 2026-06-24)
-**1,306,118 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 334,718 B 上回る。
+## 現在の BEST スコア (本物 5 ファイル)
+**1,270,252 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 370,584 B 上回る。
+(local-baseline 1,306,118 から -35,866)
 
 > 注: 旧 PROGRESS の 543,360 / 624,073 は **壊れたデータ(explosion.wav 118B, TeraPad.exe 欠落)**
 > 上の無効値。本物 5 ファイルで測り直したのが上記。
@@ -45,3 +46,7 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
 | # | スコア | 手法 | 変化量 |
 |---|---|---|---|
 | local-baseline | 1,306,118 | 本物5ファイル再計測 | - |
+| +1 | 1,305,634 | ミキサー文脈に match-active ビット (2048->4096) | -484 |
+| +2 | 1,302,964 | 第2マッチモデル (6バイトハッシュ) | -2,670 |
+| +3 | 1,282,271 | 適応カウンタ学習レート (prob<<4)\|count | -20,693 |
+| +4 | 1,270,252 | CM学習レートをファイル種別で2プロファイル化 | -12,019 |

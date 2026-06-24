@@ -1024,7 +1024,7 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 // strideLen: スパース文脈の刻み幅。テキスト UTF-8 は 3、x86 exe は dword 整列の 4。
 // tbits: 文脈テーブル t2..t9 のサイズ指数 (1<<tbits)。データ豊富な exe のみ 28 (4.3GB)。
 struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 3, 27 };   // テキスト (CM)
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テキスト (CM)
 static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16, 2, 28 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 3, 27 };   // 音声 (WAV_CM)

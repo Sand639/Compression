@@ -1017,7 +1017,8 @@ struct CMModel {
     std::vector<uint16_t> apm4;                    // 四次推定 (256 文脈 x 65 点、cx[3]ハッシュ)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
-    int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (ミキサー用)
+    int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
+    int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
     int apm3Idx = 0, apm3Wt = 0;
@@ -1025,7 +1026,7 @@ struct CMModel {
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
-                t8(TSIZE, 2048), t9(TSIZE, 2048), matchTab(SM, 0), w(2048 * NIN, 1 << 14),
+                t8(TSIZE, 2048), t9(TSIZE, 2048), matchTab(SM, 0), w(4096 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1080,8 +1081,9 @@ struct CMModel {
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
+        mixCtx = mc_ext * 2 + (matchLen > 0 ? 1 : 0);   // match-active で別重み集合
         long long dot = 0;
-        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mc_ext * NIN + i]) * st[i];
+        for (int i = 0; i < NIN; ++i) dot += static_cast<long long>(w[mixCtx * NIN + i]) * st[i];
         pr0 = CM_squash(static_cast<int>(dot >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
         // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置) で補正 (65点補間)
@@ -1123,7 +1125,7 @@ struct CMModel {
     void update(int bit) {
         int err = (bit << 12) - pr0;                // mixer は自分の出力で学習
         for (int i = 0; i < NIN; ++i) {
-            int& wi = w[mc_ext * NIN + i];
+            int& wi = w[mixCtx * NIN + i];
             wi += (st[i] * err) >> 12;
             if (wi < -(1 << 20)) wi = -(1 << 20); else if (wi > (1 << 20)) wi = (1 << 20);
         }

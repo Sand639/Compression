@@ -1048,7 +1048,7 @@ struct CMModel {
     int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0};
     std::vector<uint16_t> apm;                     // 一次推定 (8192 文脈 x 65 点、match強度付き)
     std::vector<uint16_t> apm2;                    // 二次推定 (2048 文脈 x 65 点、bitpos付き)
-    std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
+    std::vector<uint16_t> apm3;                    // 三次推定 (1024 文脈 x 65 点、c0×match強度)
     std::vector<uint16_t> apm4;                    // 四次推定 (2048 文脈 x 65 点、cx[3]ハッシュ+bitpos)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
@@ -1071,7 +1071,7 @@ struct CMModel {
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
-                apm(8192 * 65), apm2(2048 * 65), apm3(512 * 65), apm4(2048 * 65) {
+                apm(8192 * 65), apm2(2048 * 65), apm3(1024 * 65), apm4(2048 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1081,7 +1081,7 @@ struct CMModel {
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
         for (int i = 0; i < 2048; ++i)
             for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
-        for (int i = 0; i < 512; ++i)
+        for (int i = 0; i < 1024; ++i)
             for (int j = 0; j < 65; ++j)
                 apm3[i * 65 + j] = initv[j];
     }
@@ -1192,7 +1192,7 @@ struct CMModel {
         {
             int s3 = CM_STR.v[prf] + 2048;
             apm3Wt = s3 & 63; int j3 = s3 >> 6;
-            apm3Idx = c0 * 65 + j3;    // c0: 1..255 (512 未満で apm3 512*65 に収まる)
+            apm3Idx = (c0 * 4 + ms) * 65 + j3;  // c0: 1..255, ms: 0..3 → 1024文脈
             int ap3 = (apm3[apm3Idx] * (64 - apm3Wt) + apm3[apm3Idx + 1] * apm3Wt) >> 10;
             prf = (prf + ap3) >> 1;
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
@@ -2141,9 +2141,10 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         midLo[i]  = static_cast<uint8_t>(mr);       midHi[i]  = static_cast<uint8_t>(mr >> 8);
         sideLo[i] = static_cast<uint8_t>(sr);       sideHi[i] = static_cast<uint8_t>(sr >> 8);
     }
+    // Lo系→Hi系の順: sideLo が midLo の文脈を活用, sideHi が midHi の文脈を活用
     out.insert(out.end(), midLo.begin(),  midLo.end());
-    out.insert(out.end(), midHi.begin(),  midHi.end());
     out.insert(out.end(), sideLo.begin(), sideLo.end());
+    out.insert(out.end(), midHi.begin(),  midHi.end());
     out.insert(out.end(), sideHi.begin(), sideHi.end());
     return out;
 }
@@ -2176,10 +2177,11 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         if (methods[2 * b + 1] == WAV_METHOD_LPC) { sideShift[b] = in[pos++]; for (int j = 0; j < LPC_ORDER; ++j) sideCoef[b * LPC_ORDER + j] = getI16(); }
     }
 
+    // エンコーダー出力順: midLo, sideLo, midHi, sideHi (Lo系→Hi系)
     const uint8_t* midLo  = in.data() + pos;
-    const uint8_t* midHi  = midLo  + frames;
-    const uint8_t* sideLo = midHi  + frames;
-    const uint8_t* sideHi = sideLo + frames;
+    const uint8_t* sideLo = midLo  + frames;
+    const uint8_t* midHi  = sideLo + frames;
+    const uint8_t* sideHi = midHi  + frames;
 
     // 残差から各チャンネル値を逆予測で復元 (ブロックごとに手法切替, 履歴は連続)
     std::vector<uint16_t> mid(frames), side(frames);

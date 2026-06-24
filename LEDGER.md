@@ -54,6 +54,8 @@
 | APM1 2048→8192文脈(match強度ms追加) + APM2 256→2048文脈(bitpos追加) | **-579** | 全5ファイル改善。hal -189, txt -132, wav -97, exe -88, yuuki -73 |
 | APM4 256→2048文脈(cx[3]+bitpos) | **-164** | hal -146, txt -59, wav -40, yuuki -21; exe +102 (net改善) |
 
+| APM3 512→1024文脈(c0×ms) + WAVプレーン順[midLo,sideLo,midHi,sideHi] | **-404** | exe -277(APM3効果), hal -81, wav -24, txt -15, yuuki -7 |
+
 ## (旧・無効) ベースライン
 - **スコア**: 624,073 bytes
 - **日時**: 初期計測

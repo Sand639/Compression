@@ -1022,18 +1022,19 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 // subShift: order-2/3/4 sub-mixer 文脈のハッシュ右シフト。小さいほど文脈が細かい
 // (>>21=16384文脈, >>24=2048文脈)。データ量の多い exe は細かい方が良いが小ファイルは粗い方が良い。
 // strideLen: スパース文脈の刻み幅。テキスト UTF-8 は 3、x86 exe は dword 整列の 4。
-struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 3 };   // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16, 4 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 3 };   // 音声 (WAV_CM)
+// tbits: 文脈テーブル t2..t9 のサイズ指数 (1<<tbits)。データ豊富な exe のみ 28 (4.3GB)。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 3, 27 };   // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16, 4, 28 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 3, 27 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
     static const int NIN = 13;                     // o0..o8,stride3,match,match2(6B),match3(8B)
-    static const int TBITS = 27, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
+    const int TBITS, TSIZE, TMASK;                  // t2..t9 のサイズ (プロファイル依存)
     static const int SM = 1 << 24;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
@@ -1066,7 +1067,8 @@ struct CMModel {
     int strideLen = 3;                             // スパース文脈の刻み (プロファイル依存)
 
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
-              : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
+              : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
+                t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(524288 * NIN, 1 << 14), w3(524288 * NIN, 1 << 14), w4(524288 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {

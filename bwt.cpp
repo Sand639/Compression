@@ -1024,7 +1024,7 @@ static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 11 };   // 非定常: exe/wa
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
     static const int NIN = 12;                     // o0..o8,stride3,match,match2(6B hash)
-    static const int TBITS = 23, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
+    static const int TBITS = 27, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 24;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint32_t> matchTab, matchTab2;

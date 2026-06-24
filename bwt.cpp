@@ -1021,11 +1021,12 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 // algo バイト由来で決まるので encode/decode で一致し完全可逆。
 // subShift: order-2/3/4 sub-mixer 文脈のハッシュ右シフト。小さいほど文脈が細かい
 // (>>21=16384文脈, >>24=2048文脈)。データ量の多い exe は細かい方が良いが小ファイルは粗い方が良い。
-struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24 };   // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24 };   // 音声 (WAV_CM)
+// strideLen: スパース文脈の刻み幅。テキスト UTF-8 は 3、x86 exe は dword 整列の 4。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; };
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 3 };   // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16, 4 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 3 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
@@ -1062,13 +1063,14 @@ struct CMModel {
     int mixShift = 12;                             // ミキサー学習レート (プロファイル依存)
     int apmShift = 7;                              // APM 更新レート (プロファイル依存)
     int subShift = 24;                             // sub-mixer 文脈の細かさ (プロファイル依存)
+    int strideLen = 3;                             // スパース文脈の刻み (プロファイル依存)
 
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(524288 * NIN, 1 << 14), w3(524288 * NIN, 1 << 14), w4(524288 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
-        rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift;
+        rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 2048; ++i)
@@ -1090,13 +1092,14 @@ struct CMModel {
         idx[6] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
         idx[7] = static_cast<int>(((cx[7] * 0x9E3779B1u) + c0) & TMASK);  // order7
         idx[8] = static_cast<int>(((cx[8] * 0x9E3779B1u) + c0) & TMASK);  // order8
-        // stride-3 context: bytes at -3, -6, -9 (UTF-8 character alignment)
+        // スパース文脈: -s, -2s, -3s バイト (s=strideLen; txt=3 UTF-8整列, exe=4 dword整列)
         {
             size_t p = buf.size();
+            int s = strideLen;
             uint32_t sh3 = static_cast<uint32_t>(c0);
-            if (p >= 3) sh3 = sh3 * 0x9E3779B1u + buf[p - 3] + 1u;
-            if (p >= 6) sh3 = sh3 * 0x9E3779B1u + buf[p - 6] + 1u;
-            if (p >= 9) sh3 = sh3 * 0x9E3779B1u + buf[p - 9] + 1u;
+            if (p >= static_cast<size_t>(s))     sh3 = sh3 * 0x9E3779B1u + buf[p - s] + 1u;
+            if (p >= static_cast<size_t>(2 * s)) sh3 = sh3 * 0x9E3779B1u + buf[p - 2 * s] + 1u;
+            if (p >= static_cast<size_t>(3 * s)) sh3 = sh3 * 0x9E3779B1u + buf[p - 3 * s] + 1u;
             idx[9] = static_cast<int>(sh3 & TMASK);
         }
         st[0] = CM_STR.v[t0[idx[0]] >> 4];

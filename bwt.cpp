@@ -1027,7 +1027,7 @@ struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; in
 static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テキスト (CM)
 static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16, 2, 28 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 3, 27 };   // 音声 (WAV_CM)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 2, 27 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。

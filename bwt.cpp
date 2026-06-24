@@ -1019,11 +1019,11 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 };
 // ファイル種別ごとの CM パラメータ束 (rate プロファイル + ミキサー学習シフト)。
 // algo バイト由来で決まるので encode/decode で一致し完全可逆。
-struct CMProfile { const int* rate; int mixShift; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11 };   // テキスト (CM): 速めの mixer
-static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12 };   // 画像 (BMP_CM): 遅めの mixer
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11 };   // 音声 (WAV_CM)
+struct CMProfile { const int* rate; int mixShift; int apmShift; };
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8 };   // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
@@ -1057,13 +1057,14 @@ struct CMModel {
     int apm4Ctx = 0, apm4Idx = 0, apm4Wt = 0;
     const int* rate = CM_RATE_SLOW;                // 適応カウンタ学習レートのプロファイル
     int mixShift = 12;                             // ミキサー学習レート (プロファイル依存)
+    int apmShift = 7;                              // APM 更新レート (プロファイル依存)
 
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(2048 * NIN, 1 << 14), w3(2048 * NIN, 1 << 14), w4(2048 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
-        rate = prof.rate; mixShift = prof.mixShift;
+        rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 2048; ++i)
@@ -1208,17 +1209,17 @@ struct CMModel {
             if (wfk < -(1 << 18)) wfk = -(1 << 18); else if (wfk > (1 << 18)) wfk = (1 << 18);
         }
         int g = bit << 16;                          // APM1 更新
-        apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> 7));
-        apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> 7));
+        apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> apmShift));
+        apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> apmShift));
         // APM2 更新
-        apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> 7));
-        apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> 7));
+        apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> apmShift));
+        apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> apmShift));
         // APM3 更新
-        apm3[apm3Idx]     = static_cast<uint16_t>(apm3[apm3Idx]     + ((g - apm3[apm3Idx])     >> 7));
-        apm3[apm3Idx + 1] = static_cast<uint16_t>(apm3[apm3Idx + 1] + ((g - apm3[apm3Idx + 1]) >> 7));
+        apm3[apm3Idx]     = static_cast<uint16_t>(apm3[apm3Idx]     + ((g - apm3[apm3Idx])     >> apmShift));
+        apm3[apm3Idx + 1] = static_cast<uint16_t>(apm3[apm3Idx + 1] + ((g - apm3[apm3Idx + 1]) >> apmShift));
         // APM4 更新
-        apm4[apm4Idx]     = static_cast<uint16_t>(apm4[apm4Idx]     + ((g - apm4[apm4Idx])     >> 7));
-        apm4[apm4Idx + 1] = static_cast<uint16_t>(apm4[apm4Idx + 1] + ((g - apm4[apm4Idx + 1]) >> 7));
+        apm4[apm4Idx]     = static_cast<uint16_t>(apm4[apm4Idx]     + ((g - apm4[apm4Idx])     >> apmShift));
+        apm4[apm4Idx + 1] = static_cast<uint16_t>(apm4[apm4Idx + 1] + ((g - apm4[apm4Idx + 1]) >> apmShift));
         int tgt = bit << 12;
         auto upd  = [&](std::vector<uint16_t>& t, int ix) {
             uint16_t e = t[ix];

@@ -1998,7 +1998,7 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     }
 
     // ブロック別 (連続履歴) の FLAC 固定予測 (0〜4 次)。すべて uint16 ラップで可逆。
-    const size_t BS = 4096;                              // フレーム/ブロック
+    const size_t BS = 8192;                              // フレーム/ブロック
     const size_t numBlocks = (frames + BS - 1) / BS;
 
     // [lo,hi) ブロックで order の残差絶対値和を計算 (履歴は連続 = 全域参照)

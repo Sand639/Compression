@@ -12,8 +12,9 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
   payload 合計 + 180 B(アーカイブヘッダ) = output.enc サイズ。**最終合否は必ず bwt.exe で確認**。
 
 ## 現在の BEST スコア (本物 5 ファイル)
-**1,270,252 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 370,584 B 上回る。
-(local-baseline 1,306,118 から -35,866)
+**1,254,309 bytes** (output.enc) — round-trip 5/5 完全一致, self-test PASS, 7z(1,640,836) を 386,527 B 上回る。
+(local-baseline 1,306,118 から -51,809)
+内訳: exe 455,912 / wav 271,245 / hal 235,890 / txt 231,036 / yuuki 60,046
 
 > 注: 旧 PROGRESS の 543,360 / 624,073 は **壊れたデータ(explosion.wav 118B, TeraPad.exe 欠落)**
 > 上の無効値。本物 5 ファイルで測り直したのが上記。
@@ -50,3 +51,7 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Vs
 | +2 | 1,302,964 | 第2マッチモデル (6バイトハッシュ) | -2,670 |
 | +3 | 1,282,271 | 適応カウンタ学習レート (prob<<4)\|count | -20,693 |
 | +4 | 1,270,252 | CM学習レートをファイル種別で2プロファイル化 | -12,019 |
+| +5 | 1,268,951 | ミキサー学習レートをプロファイル化 (CMProfile) | -1,301 |
+| +6 | 1,254,309 | コンテキストテーブル TBITS 23->27 | -14,642 |
+
+失敗(revert): order-9 文脈追加 (+2,004, ミキサー希釈)

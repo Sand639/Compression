@@ -1001,8 +1001,16 @@ struct BinaryRangeDecoder {
     }
 };
 
+// 適応カウンタの学習レート (16.16 固定小数): CM_RATE[n] = round(131072/(2n+3)) ~= 1/(n+1.5)
+// 新しい文脈は速く(>>1相当)、観測が増えるほど遅く(n=15で~>>4)収束する。
+static const int CM_RATE[16] = {
+    43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
+     6898,  6241,  5698,  5242,  4854,  4520, 4228, 3972
+};
+
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
+//   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
     static const int NIN = 12;                     // o0..o8,stride3,match,match2(6B hash)
     static const int TBITS = 23, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
@@ -1025,9 +1033,9 @@ struct CMModel {
     int apm3Idx = 0, apm3Wt = 0;
     int apm4Ctx = 0, apm4Idx = 0, apm4Wt = 0;
 
-    CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
-                t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
-                t8(TSIZE, 2048), t9(TSIZE, 2048), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
+    CMModel() : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
+                t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1059,16 +1067,16 @@ struct CMModel {
             if (p >= 9) sh3 = sh3 * 0x9E3779B1u + buf[p - 9] + 1u;
             idx[9] = static_cast<int>(sh3 & TMASK);
         }
-        st[0] = CM_STR.v[t0[idx[0]]];
-        st[1] = CM_STR.v[t1[idx[1]]];
-        st[2] = CM_STR.v[t2[idx[2]]];
-        st[3] = CM_STR.v[t3[idx[3]]];
-        st[4] = CM_STR.v[t4[idx[4]]];
-        st[5] = CM_STR.v[t5[idx[5]]];
-        st[6] = CM_STR.v[t6[idx[6]]];
-        st[7] = CM_STR.v[t7[idx[7]]];
-        st[8] = CM_STR.v[t8[idx[8]]];
-        st[9] = CM_STR.v[t9[idx[9]]];
+        st[0] = CM_STR.v[t0[idx[0]] >> 4];
+        st[1] = CM_STR.v[t1[idx[1]] >> 4];
+        st[2] = CM_STR.v[t2[idx[2]] >> 4];
+        st[3] = CM_STR.v[t3[idx[3]] >> 4];
+        st[4] = CM_STR.v[t4[idx[4]] >> 4];
+        st[5] = CM_STR.v[t5[idx[5]] >> 4];
+        st[6] = CM_STR.v[t6[idx[6]] >> 4];
+        st[7] = CM_STR.v[t7[idx[7]] >> 4];
+        st[8] = CM_STR.v[t8[idx[8]] >> 4];
+        st[9] = CM_STR.v[t9[idx[9]] >> 4];
         st[10] = 0;                                 // match model
         if (matchPtr > 0 && matchPtr < buf.size()) {
             int predByte = buf[matchPtr];
@@ -1153,9 +1161,17 @@ struct CMModel {
         // APM4 更新
         apm4[apm4Idx]     = static_cast<uint16_t>(apm4[apm4Idx]     + ((g - apm4[apm4Idx])     >> 7));
         apm4[apm4Idx + 1] = static_cast<uint16_t>(apm4[apm4Idx + 1] + ((g - apm4[apm4Idx + 1]) >> 7));
-        auto upd  = [&](std::vector<uint16_t>& t, int ix, int sh) { t[ix] = static_cast<uint16_t>(t[ix] + (((bit << 12) - t[ix]) >> sh)); };
-        upd(t0, idx[0], 5); upd(t1, idx[1], 3); upd(t2, idx[2], 3); upd(t3, idx[3], 3);
-        upd(t4, idx[4], 3); upd(t5, idx[5], 3); upd(t6, idx[6], 3); upd(t7, idx[7], 3); upd(t8, idx[8], 3); upd(t9, idx[9], 3);
+        int tgt = bit << 12;
+        auto upd  = [&](std::vector<uint16_t>& t, int ix) {
+            uint16_t e = t[ix];
+            int n = e & 15, pr = e >> 4;
+            pr += (((tgt - pr) * CM_RATE[n]) >> 16);
+            if (pr < 0) pr = 0; else if (pr > 4095) pr = 4095;
+            if (n < 15) ++n;
+            t[ix] = static_cast<uint16_t>((pr << 4) | n);
+        };
+        upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]);
+        upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]); upd(t7, idx[7]); upd(t8, idx[8]); upd(t9, idx[9]);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;

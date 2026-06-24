@@ -1031,11 +1031,11 @@ static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24 };   // 音声 (WA
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
-    static const int NIN = 12;                     // o0..o8,stride3,match,match2(6B hash)
+    static const int NIN = 13;                     // o0..o8,stride3,match,match2(6B),match3(8B)
     static const int TBITS = 27, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 24;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
-    std::vector<uint32_t> matchTab, matchTab2;
+    std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
     std::vector<int> w2;                           // 第2 mixer 重み (order-2 文脈 x NIN)
@@ -1050,6 +1050,7 @@ struct CMModel {
     std::vector<uint16_t> apm4;                    // 四次推定 (256 文脈 x 65 点、cx[3]ハッシュ)
     uint32_t matchPtr = 0; int matchLen = 0;
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
+    uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 第3マッチモデル (8バイトハッシュ)
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
@@ -1065,7 +1066,7 @@ struct CMModel {
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(524288 * NIN, 1 << 14), w3(524288 * NIN, 1 << 14), w4(524288 * NIN, 1 << 14), wf(32 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(524288 * NIN, 1 << 14), w3(524288 * NIN, 1 << 14), w4(524288 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift;
         uint16_t initv[65];
@@ -1128,6 +1129,17 @@ struct CMModel {
                 int predBit = (predByte >> (7 - bitpos)) & 1;
                 int conf = (matchLen2 < 28 ? matchLen2 : 28) * 72;
                 st[11] = predBit ? conf : -conf;
+            }
+        }
+        st[12] = 0;                                 // 第3マッチモデル (8バイトハッシュ)
+        if (matchPtr3 > 0 && matchPtr3 < buf.size()) {
+            int predByte = buf[matchPtr3];
+            int bitsSoFar = c0 - (1 << bitpos);
+            int expected = predByte >> (8 - bitpos);
+            if (bitsSoFar == expected) {
+                int predBit = (predByte >> (7 - bitpos)) & 1;
+                int conf = (matchLen3 < 28 ? matchLen3 : 28) * 72;
+                st[12] = predBit ? conf : -conf;
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
@@ -1242,6 +1254,8 @@ struct CMModel {
             else { matchPtr = 0; matchLen = 0; }
             if (matchPtr2 > 0 && matchPtr2 < buf.size() - 1 && buf[matchPtr2] == B) { ++matchPtr2; ++matchLen2; }
             else { matchPtr2 = 0; matchLen2 = 0; }
+            if (matchPtr3 > 0 && matchPtr3 < buf.size() - 1 && buf[matchPtr3] == B) { ++matchPtr3; ++matchLen3; }
+            else { matchPtr3 = 0; matchLen3 = 0; }
             size_t p = buf.size();
             uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
             for (int k = 1; k <= 8; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
@@ -1258,6 +1272,13 @@ struct CMModel {
                 h2 = (h2 * 2654435761u) & (SM - 1);
                 if (matchPtr2 == 0) { uint32_t cand = matchTab2[h2]; if (cand > 0 && cand < p) { matchPtr2 = cand; matchLen2 = 1; } }
                 matchTab2[h2] = static_cast<uint32_t>(p);
+            }
+            if (p >= 8) {                            // 第3マッチ: 直近8バイトハッシュ
+                uint32_t h3 = 0;
+                for (int k = 1; k <= 8; ++k) h3 = h3 * 0x9E3779B1u + buf[p - k] + 1u;
+                h3 = (h3 * 2654435761u) & (SM - 1);
+                if (matchPtr3 == 0) { uint32_t cand = matchTab3[h3]; if (cand > 0 && cand < p) { matchPtr3 = cand; matchLen3 = 1; } }
+                matchTab3[h3] = static_cast<uint32_t>(p);
             }
             c0 = 1; bitpos = 0;
         }

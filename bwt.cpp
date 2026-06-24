@@ -1022,7 +1022,7 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 struct CMProfile { const int* rate; int mixShift; };
 static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11 };   // テキスト (CM): 速めの mixer
 static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12 };   // 画像 (BMP_CM): 遅めの mixer
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 11 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)

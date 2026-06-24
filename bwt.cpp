@@ -1004,11 +1004,11 @@ struct BinaryRangeDecoder {
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 struct CMModel {
-    static const int NIN = 11;                     // o0,o1,o2,o3,o4,o5,o6,o7,o8,stride3,match
+    static const int NIN = 12;                     // o0..o8,stride3,match,match2(6B hash)
     static const int TBITS = 23, TSIZE = 1 << TBITS, TMASK = TSIZE - 1;
     static const int SM = 1 << 24;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
-    std::vector<uint32_t> matchTab;
+    std::vector<uint32_t> matchTab, matchTab2;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (256 文脈 x NIN)
     std::vector<uint16_t> apm;                     // 一次推定 (2048 文脈 x 65 点)
@@ -1016,6 +1016,7 @@ struct CMModel {
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
     std::vector<uint16_t> apm4;                    // 四次推定 (256 文脈 x 65 点、cx[3]ハッシュ)
     uint32_t matchPtr = 0; int matchLen = 0;
+    uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
@@ -1026,7 +1027,7 @@ struct CMModel {
 
     CMModel() : t0(512, 2048), t1(256 * 512, 2048), t2(TSIZE, 2048), t3(TSIZE, 2048),
                 t4(TSIZE, 2048), t5(TSIZE, 2048), t6(TSIZE, 2048), t7(TSIZE, 2048),
-                t8(TSIZE, 2048), t9(TSIZE, 2048), matchTab(SM, 0), w(4096 * NIN, 1 << 14),
+                t8(TSIZE, 2048), t9(TSIZE, 2048), matchTab(SM, 0), matchTab2(SM, 0), w(4096 * NIN, 1 << 14),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1077,6 +1078,17 @@ struct CMModel {
                 int predBit = (predByte >> (7 - bitpos)) & 1;
                 int conf = (matchLen < 28 ? matchLen : 28) * 72;
                 st[10] = predBit ? conf : -conf;
+            }
+        }
+        st[11] = 0;                                 // 第2マッチモデル (6バイトハッシュ)
+        if (matchPtr2 > 0 && matchPtr2 < buf.size()) {
+            int predByte = buf[matchPtr2];
+            int bitsSoFar = c0 - (1 << bitpos);
+            int expected = predByte >> (8 - bitpos);
+            if (bitsSoFar == expected) {
+                int predBit = (predByte >> (7 - bitpos)) & 1;
+                int conf = (matchLen2 < 28 ? matchLen2 : 28) * 72;
+                st[11] = predBit ? conf : -conf;
             }
         }
         mc = static_cast<int>(cx[1] & 0xFF);
@@ -1150,6 +1162,8 @@ struct CMModel {
             buf.push_back(static_cast<uint8_t>(B));
             if (matchPtr > 0 && matchPtr < buf.size() - 1 && buf[matchPtr] == B) { ++matchPtr; ++matchLen; }
             else { matchPtr = 0; matchLen = 0; }
+            if (matchPtr2 > 0 && matchPtr2 < buf.size() - 1 && buf[matchPtr2] == B) { ++matchPtr2; ++matchLen2; }
+            else { matchPtr2 = 0; matchLen2 = 0; }
             size_t p = buf.size();
             uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
             for (int k = 1; k <= 8; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
@@ -1159,6 +1173,13 @@ struct CMModel {
                 hh = (hh * 2654435761u) & (SM - 1);
                 if (matchPtr == 0) { uint32_t cand = matchTab[hh]; if (cand > 0 && cand < p) { matchPtr = cand; matchLen = 1; } }
                 matchTab[hh] = static_cast<uint32_t>(p);
+            }
+            if (p >= 6) {                            // 第2マッチ: 直近6バイトハッシュ
+                uint32_t h2 = 0;
+                for (int k = 1; k <= 6; ++k) h2 = h2 * 0x9E3779B1u + buf[p - k] + 1u;
+                h2 = (h2 * 2654435761u) & (SM - 1);
+                if (matchPtr2 == 0) { uint32_t cand = matchTab2[h2]; if (cand > 0 && cand < p) { matchPtr2 = cand; matchLen2 = 1; } }
+                matchTab2[h2] = static_cast<uint32_t>(p);
             }
             c0 = 1; bitpos = 0;
         }

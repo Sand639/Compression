@@ -1046,8 +1046,8 @@ struct CMModel {
     std::vector<int> wf;                           // 最終 mixer (sub-mixer をbitpos毎に学習合成)
     static const int NMIX = 4;
     int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0};
-    std::vector<uint16_t> apm;                     // 一次推定 (2048 文脈 x 65 点)
-    std::vector<uint16_t> apm2;                    // 二次推定 (256 文脈 x 65 点、別文脈)
+    std::vector<uint16_t> apm;                     // 一次推定 (8192 文脈 x 65 点、match強度付き)
+    std::vector<uint16_t> apm2;                    // 二次推定 (2048 文脈 x 65 点、bitpos付き)
     std::vector<uint16_t> apm3;                    // 三次推定 (512 文脈 x 65 点、c0 文脈)
     std::vector<uint16_t> apm4;                    // 四次推定 (256 文脈 x 65 点、cx[3]ハッシュ)
     uint32_t matchPtr = 0; int matchLen = 0;
@@ -1071,14 +1071,16 @@ struct CMModel {
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
-                apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
+                apm(8192 * 65), apm2(2048 * 65), apm3(512 * 65), apm4(256 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
-        for (int i = 0; i < 2048; ++i)
+        for (int i = 0; i < 8192; ++i)
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
+        for (int i = 0; i < 2048; ++i)
+            for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
         for (int i = 0; i < 256; ++i)
-            for (int j = 0; j < 65; ++j) { apm2[i * 65 + j] = initv[j]; apm4[i * 65 + j] = initv[j]; }
+            for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
         for (int i = 0; i < 512; ++i)
             for (int j = 0; j < 65; ++j)
                 apm3[i * 65 + j] = initv[j];
@@ -1171,15 +1173,15 @@ struct CMModel {
         for (int k = 0; k < NMIX; ++k) dotF += static_cast<long long>(wf[fmCtx * NMIX + k]) * fmLogit[k];
         pr0 = CM_squash(static_cast<int>(dotF >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
-        // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置) で補正 (65点補間)
+        // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置+match強度) で補正 (65点補間)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
         int wt = s & 63, j = s >> 6;
-        apmIdx = mc_ext * 65 + j;
+        apmIdx = (mc_ext * 4 + ms) * 65 + j;       // 8192文脈 (mc_ext=2048, ms=4)
         int ap = (apm[apmIdx] * (64 - wt) + apm[apmIdx + 1] * wt) >> 10;    // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
-        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位8bit) でさらに補正 (65点補間)
-        apm2Ctx = static_cast<int>((cx[2] * 0x9E3779B1u) >> 24);
+        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位8bit+bitpos) でさらに補正 (65点補間)
+        apm2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // 2048文脈 (8bit+3bit)
         int s2 = CM_STR.v[prf] + 2048;
         apm2Wt = s2 & 63; int j2 = s2 >> 6;
         apm2Idx = apm2Ctx * 65 + j2;
@@ -2942,10 +2944,38 @@ static bool VerifyFolders(const fs::path& a, const fs::path& b) {
 // ==========================================================================
 // メイン: data/ を 1 ファイルに圧縮 -> data_restored/ へ復元 -> 完全一致検証
 // ==========================================================================
-int main() {
+int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleOutputCP(65001);   // コンソール出力を UTF-8 に (文字化け対策)
 #endif
+
+    // --extract <archive.enc> <outdir/> : アーカイブからファイルを展開する (開発用)
+    if (argc >= 4 && std::string(argv[1]) == "--extract") {
+        std::vector<uint8_t> archive;
+        if (!ReadFileFs(fs::path(argv[2]), archive)) {
+            std::cout << "[ERROR] 読込失敗: " << argv[2] << "\n"; return 1;
+        }
+        std::vector<StoredFile> files;
+        if (!ParseArchive(archive, files)) {
+            std::cout << "[ERROR] アーカイブ解析失敗\n"; return 1;
+        }
+        fs::path outDir = argv[3];
+        fs::create_directories(outDir);
+        for (const auto& f : files) {
+            std::vector<uint8_t> raw = DecompressOne(f.algo, f.data, f.originalSize);
+            if (raw.size() != f.originalSize) {
+                std::cout << "[ERROR] size mismatch for " << f.name << "\n"; return 1;
+            }
+            fs::path outPath = outDir / Utf8ToPath(f.name);
+            fs::create_directories(outPath.parent_path());
+            if (!WriteFileFs(outPath, raw)) {
+                std::cout << "[ERROR] write fail: " << outPath.string() << "\n"; return 1;
+            }
+            std::printf("  extracted: %s (%zu B)\n", f.name.c_str(), raw.size());
+        }
+        std::cout << "done.\n";
+        return 0;
+    }
 
     // ---- アルゴリズムのセルフテスト ----
     if (!RunSelfTests()) {

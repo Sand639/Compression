@@ -1019,11 +1019,13 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 };
 // ファイル種別ごとの CM パラメータ束 (rate プロファイル + ミキサー学習シフト)。
 // algo バイト由来で決まるので encode/decode で一致し完全可逆。
-struct CMProfile { const int* rate; int mixShift; int apmShift; };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8 };   // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7 };   // 音声 (WAV_CM)
+// subShift: order-2/3/4 sub-mixer 文脈のハッシュ右シフト。小さいほど文脈が細かい
+// (>>21=16384文脈, >>24=2048文脈)。データ量の多い exe は細かい方が良いが小ファイルは粗い方が良い。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; };
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24 };   // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 16 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24 };   // 音声 (WAV_CM)
 
 // CM 予測モデル (encode/decode 共通)
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
@@ -1058,13 +1060,14 @@ struct CMModel {
     const int* rate = CM_RATE_SLOW;                // 適応カウンタ学習レートのプロファイル
     int mixShift = 12;                             // ミキサー学習レート (プロファイル依存)
     int apmShift = 7;                              // APM 更新レート (プロファイル依存)
+    int subShift = 24;                             // sub-mixer 文脈の細かさ (プロファイル依存)
 
     CMModel(const CMProfile& prof = CM_PROF_SLOW)
               : t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(2048 * NIN, 1 << 14), w3(2048 * NIN, 1 << 14), w4(2048 * NIN, 1 << 14), wf(32 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), w(8192 * NIN, 1 << 14), w2(524288 * NIN, 1 << 14), w3(524288 * NIN, 1 << 14), w4(524288 * NIN, 1 << 14), wf(32 * NMIX, 16384),
                 apm(2048 * 65), apm2(256 * 65), apm3(512 * 65), apm4(256 * 65) {
-        rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift;
+        rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 2048; ++i)
@@ -1131,9 +1134,9 @@ struct CMModel {
         mc_ext = mc * 8 + bitpos;
         int ms = matchLen == 0 ? 0 : (matchLen < 8 ? 1 : (matchLen < 32 ? 2 : 3));
         mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
-        mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-2 文脈
-        mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-3 文脈
-        mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 24) * 8 + bitpos);  // order-4 文脈
+        mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-2 文脈
+        mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-3 文脈
+        mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-4 文脈
         long long dot = 0, dot2 = 0, dot3 = 0, dot4 = 0;
         for (int i = 0; i < NIN; ++i) {
             dot  += static_cast<long long>(w [mixCtx  * NIN + i]) * st[i];

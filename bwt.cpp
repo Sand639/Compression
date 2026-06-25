@@ -1056,7 +1056,8 @@ struct CMModel {
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
-    int ms_apm = 0;                                // 8段階 match strength (APM1/3専用)
+    int ms_apm = 0;                                // 8段階 match strength (APM3専用)
+    int ms_apm16 = 0;                              // 16段階 match strength (APM1専用)
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
     int apm3Idx = 0, apm3Wt = 0;
@@ -1072,11 +1073,11 @@ struct CMModel {
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
-                apm(16384 * 65), apm2(4096 * 65), apm3(2048 * 65), apm4(262144 * 65) {
+                apm(32768 * 65), apm2(4096 * 65), apm3(2048 * 65), apm4(262144 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
-        for (int i = 0; i < 16384; ++i)
+        for (int i = 0; i < 32768; ++i)
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
         for (int i = 0; i < 4096; ++i)
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
@@ -1153,7 +1154,8 @@ struct CMModel {
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
         int ms = matchLen == 0 ? 0 : (matchLen < 8 ? 1 : (matchLen < 32 ? 2 : 3));
-        ms_apm = matchLen == 0 ? 0 : (matchLen < 4 ? 1 : (matchLen < 8 ? 2 : (matchLen < 16 ? 3 : (matchLen < 32 ? 4 : (matchLen < 64 ? 5 : (matchLen < 128 ? 6 : 7))))));  // 8段階
+        ms_apm = matchLen == 0 ? 0 : (matchLen < 4 ? 1 : (matchLen < 8 ? 2 : (matchLen < 16 ? 3 : (matchLen < 32 ? 4 : (matchLen < 64 ? 5 : (matchLen < 128 ? 6 : 7))))));  // 8段階 (APM3用)
+        ms_apm16 = matchLen == 0 ? 0 : (matchLen < 2 ? 1 : (matchLen < 3 ? 2 : (matchLen < 4 ? 3 : (matchLen < 6 ? 4 : (matchLen < 8 ? 5 : (matchLen < 12 ? 6 : (matchLen < 16 ? 7 : (matchLen < 24 ? 8 : (matchLen < 32 ? 9 : (matchLen < 48 ? 10 : (matchLen < 64 ? 11 : (matchLen < 96 ? 12 : (matchLen < 128 ? 13 : (matchLen < 192 ? 14 : 15))))))))))))));  // 16段階 (APM1用)
         mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
         mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-2 文脈
         mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-3 文脈
@@ -1178,7 +1180,7 @@ struct CMModel {
         // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置+match強度8段階) で補正 (65点補間)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
         int wt = s & 63, j = s >> 6;
-        apmIdx = (mc_ext * 8 + ms_apm) * 65 + j;   // 16384文脈 (mc_ext=2048, ms_apm=8)
+        apmIdx = (mc_ext * 16 + ms_apm16) * 65 + j;  // 32768文脈 (mc_ext=2048, ms_apm16=16)
         int ap = (apm[apmIdx] * (64 - wt) + apm[apmIdx + 1] * wt) >> 10;    // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;

@@ -2048,8 +2048,10 @@ static bool ParseWav(const std::vector<uint8_t>& in, size_t& dataStart, size_t& 
     return false;
 }
 
-std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
+// stereoMode: 0=Mid/Side, 1=Left/Side, 2=Right/Side, 3=Left/Right(独立)。先頭1バイトに保存。
+std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, int stereoMode = 0) {
     std::vector<uint8_t> out;
+    out.push_back(static_cast<uint8_t>(stereoMode));     // 先頭にステレオモード
     size_t dataStart = 0, frames = 0;
 
     if (!ParseWav(in, dataStart, frames)) {
@@ -2071,8 +2073,12 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
         uint16_t L = static_cast<uint16_t>(s[0] | (s[1] << 8));
         uint16_t R = static_cast<uint16_t>(s[2] | (s[3] << 8));
         uint16_t sd = static_cast<uint16_t>(L - R);
-        side[i] = sd;
-        mid[i]  = static_cast<uint16_t>(R + (sd >> 1));
+        switch (stereoMode) {
+            case 1:  side[i] = sd; mid[i] = L; break;                                  // L/S
+            case 2:  side[i] = sd; mid[i] = R; break;                                  // R/S
+            case 3:  side[i] = R;  mid[i] = L; break;                                  // L/R 独立
+            default: side[i] = sd; mid[i] = static_cast<uint16_t>(R + (sd >> 1)); break; // M/S
+        }
     }
 
     // ブロック別 (連続履歴) の FLAC 固定予測 (0〜4 次)。すべて uint16 ラップで可逆。
@@ -2155,6 +2161,7 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
 
 std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     size_t pos = 0;
+    int stereoMode = in.empty() ? 0 : in[pos++];        // 先頭のステレオモード
     auto rdU32 = [&]() { uint32_t v = GetU32(in.data() + pos); pos += 4; return v; };
 
     uint32_t headerLen = rdU32();
@@ -2205,8 +2212,13 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
 
     out.reserve(static_cast<size_t>(headerLen) + frames * 4 + trailerLen);
     for (uint32_t i = 0; i < frames; ++i) {
-        uint16_t R = static_cast<uint16_t>(mid[i] - (side[i] >> 1));
-        uint16_t L = static_cast<uint16_t>(side[i] + R);
+        uint16_t L, R;
+        switch (stereoMode) {
+            case 1:  L = mid[i]; R = static_cast<uint16_t>(mid[i] - side[i]); break;        // L/S
+            case 2:  R = mid[i]; L = static_cast<uint16_t>(mid[i] + side[i]); break;        // R/S
+            case 3:  L = mid[i]; R = side[i]; break;                                        // L/R
+            default: R = static_cast<uint16_t>(mid[i] - (side[i] >> 1)); L = static_cast<uint16_t>(side[i] + R); break; // M/S
+        }
         out.push_back(static_cast<uint8_t>(L));
         out.push_back(static_cast<uint8_t>(L >> 8));
         out.push_back(static_cast<uint8_t>(R));
@@ -2519,8 +2531,14 @@ static std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>
             return Encode_CM(in);
         case ALGO_BCJ_CM:                                      // BCJ -> CM (非定常: FAST プロファイル)
             return Encode_CM(Encode_BCJ(in), CM_PROF_FAST);
-        case ALGO_WAV_CM:                                      // WAV 残差 -> CM (WAV プロファイル)
-            return Encode_CM(Encode_Wav_MidSide_Delta(in), CM_PROF_WAV);
+        case ALGO_WAV_CM: {                                    // WAV 残差 -> CM (4ステレオモードを試し最小を採用)
+            std::vector<uint8_t> best;
+            for (int m = 0; m < 4; ++m) {
+                std::vector<uint8_t> cm = Encode_CM(Encode_Wav_MidSide_Delta(in, m), CM_PROF_WAV);
+                if (best.empty() || cm.size() < best.size()) best = std::move(cm);
+            }
+            return best;
+        }
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM (BMP プロファイル)
             return Encode_CM(Encode_Bmp_2DPredict(in), CM_PROF_BMP);
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
@@ -2813,7 +2831,9 @@ static bool RunSelfTests() {
                         [s](const std::vector<uint8_t>& v) { return Decode_Delta(v, s); });
     }
     all &= RunSuite("BCJ",                  Encode_BCJ,          Decode_BCJ);
-    all &= RunSuite("WAV mid/side",         Encode_Wav_MidSide_Delta, Decode_Wav_MidSide_Delta);
+    all &= RunSuite("WAV mid/side",
+                    [](const std::vector<uint8_t>& v){ return Encode_Wav_MidSide_Delta(v); },
+                    Decode_Wav_MidSide_Delta);
     all &= RunSuite("BMP 2D filter",        Encode_Bmp_2DPredict,     Decode_Bmp_2DPredict);
     all &= RunSuite("full pipe (B+M+R+H)",  Pipeline_Encode, Pipeline_Decode);
 

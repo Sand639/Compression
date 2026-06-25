@@ -2151,10 +2151,9 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
         midLo[i]  = static_cast<uint8_t>(mr);       midHi[i]  = static_cast<uint8_t>(mr >> 8);
         sideLo[i] = static_cast<uint8_t>(sr);       sideHi[i] = static_cast<uint8_t>(sr >> 8);
     }
-    // フレームインターリーブ: 各16bit残差の lo,hi を隣接配置 (mid連続→side連続)。
-    // バイトプレーン分離より CM の多バイト文脈が16bit構造を捉えられ大幅に縮む。
-    for (size_t i = 0; i < frames; ++i) { out.push_back(midLo[i]);  out.push_back(midHi[i]); }
-    for (size_t i = 0; i < frames; ++i) { out.push_back(sideLo[i]); out.push_back(sideHi[i]); }
+    // フレームインターリーブ: フレーム毎に mid,side の16bit残差を隣接配置 (mLo,mHi,sLo,sHi)。
+    // 各16bit値の lo,hi が連続し、CM の多バイト文脈が16bit残差を強力にモデル化 (プレーン分離より大幅縮小)。
+    for (size_t i = 0; i < frames; ++i) { out.push_back(midLo[i]); out.push_back(midHi[i]); out.push_back(sideLo[i]); out.push_back(sideHi[i]); }
     return out;
 }
 
@@ -2188,16 +2187,15 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
     }
 
     // エンコーダー出力順: midLo, sideLo, midHi, sideHi (Lo系→Hi系)
-    const uint8_t* midP  = in.data() + pos;               // mid 残差 16bit連続
-    const uint8_t* sideP = midP + 2 * frames;             // side 残差 16bit連続
+    const uint8_t* fp = in.data() + pos;                  // フレーム毎 4B: mLo,mHi,sLo,sHi
 
     // 残差から各チャンネル値を逆予測で復元 (ブロックごとに手法切替, 履歴は連続)
     std::vector<uint16_t> mid(frames), side(frames);
     for (uint32_t i = 0; i < frames; ++i) {
         size_t b = i / blockSize;
         uint8_t mMethod = methods[2 * b], sMethod = methods[2 * b + 1];
-        uint16_t mr = static_cast<uint16_t>(midP[2 * i]  | (midP[2 * i + 1]  << 8));
-        uint16_t sr = static_cast<uint16_t>(sideP[2 * i] | (sideP[2 * i + 1] << 8));
+        uint16_t mr = static_cast<uint16_t>(fp[4 * i]     | (fp[4 * i + 1] << 8));
+        uint16_t sr = static_cast<uint16_t>(fp[4 * i + 2] | (fp[4 * i + 3] << 8));
         uint16_t mpred, spred;
         if (mMethod == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER], midShift[b]));
         else { uint16_t p1=(i>=1)?mid[i-1]:0,p2=(i>=2)?mid[i-2]:0,p3=(i>=3)?mid[i-3]:0,p4=(i>=4)?mid[i-4]:0; mpred = WavPredict(mMethod,p1,p2,p3,p4); }

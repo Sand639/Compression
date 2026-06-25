@@ -1201,8 +1201,8 @@ struct CMModel {
             prf = (prf + ap3) >> 1;
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         }
-        // APM4: prf を cx[3]ハッシュ上位15bit+bitpos でさらに補正 (65点補間)
-        apm4Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 17) * 8 + bitpos);  // 262144文脈
+        // APM4: prf を cx[4]ハッシュ上位15bit+bitpos でさらに補正 (65点補間)
+        apm4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 17) * 8 + bitpos);  // 262144文脈
         {
             int s4 = CM_STR.v[prf] + 2048;
             apm4Wt = s4 & 63; int j4 = s4 >> 6;

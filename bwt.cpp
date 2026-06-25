@@ -1072,7 +1072,7 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(2048 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
@@ -1172,7 +1172,7 @@ struct CMModel {
         fmLogit[1] = static_cast<int>(dot2 >> 16);
         fmLogit[2] = static_cast<int>(dot3 >> 16);
         fmLogit[3] = static_cast<int>(dot4 >> 16);
-        fmCtx = bitpos * 4 + ms;                        // bitpos + match強度 で sub-mixer 配分を変える
+        fmCtx = bitpos * 8 + ms_apm;                    // bitpos + match強度8段階 で sub-mixer 配分を変える
         long long dotF = 0;
         for (int k = 0; k < NMIX; ++k) dotF += static_cast<long long>(wf[fmCtx * NMIX + k]) * fmLogit[k];
         pr0 = CM_squash(static_cast<int>(dotF >> 16));

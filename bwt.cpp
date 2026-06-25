@@ -1030,7 +1030,7 @@ static const int CM_RATE_BMP[16] = {    // 画像 (BMP_CM) 用: 残差は定常�
 struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
 static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テキスト (CM)
 static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 28 };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 27 };   // 音声 (WAV_CM, インターリーブ4B周期)
 
 // CM 予測モデル (encode/decode 共通)

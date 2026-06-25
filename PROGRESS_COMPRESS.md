@@ -20,6 +20,9 @@
   LMSカスケード/leaky/sign-error(単段sign-sign 64/11が最良) / BMP subtract-red(+7,470) /
   Jcc(0F8x) BCJ拡張(+2,389, 偽陽性) / text床2185・3500(2849が最適) / hal apmShift9。
 - 注: exe TBITS29 で並列ハーネスはメモリ超過。measure.cpp を deferred(逐次)化して対応。
+- アーカイブヘッダを LEB128 化: -68。**最終 output.enc = 1,171,165 B (実機確認)。7zを469,671 B(28.6%)下回る。**
+- 確認した上限/失敗: hal残差LMS(残差が線形的に白色なので+12K悪化, WAV専用と判明) / sign-error LMS(非定常で不安定) /
+  LMSカスケード/leaky / exe Jcc-BCJ。残るは大改造のみ(NLMS音声カスケード/CALIC級画像文脈)で効果不確実。
 
 ## 第2セッション最終サマリ (2026-06-24 続き)
 - **1,211,711 B → 最終 BEST 1,210,564 B (-1,147 B)**。全て round-trip 5/5 完全一致。

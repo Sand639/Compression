@@ -2615,13 +2615,13 @@ static const uint8_t kTournamentAlgos[] = {
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files) {
     std::vector<uint8_t> out;
     out.insert(out.end(), ARCHIVE_MAGIC, ARCHIVE_MAGIC + 4);
-    PutU32(out, static_cast<uint32_t>(files.size()));
+    LzPutLEB(out, static_cast<uint32_t>(files.size()));               // ヘッダは LEB128 で節約
     for (const auto& f : files) {
-        PutU32(out, static_cast<uint32_t>(f.name.size()));
+        LzPutLEB(out, static_cast<uint32_t>(f.name.size()));
         out.insert(out.end(), f.name.begin(), f.name.end());
         out.push_back(f.algo);
-        PutU64(out, f.originalSize);
-        PutU64(out, static_cast<uint64_t>(f.data.size()));
+        LzPutLEB(out, static_cast<uint32_t>(f.originalSize));
+        LzPutLEB(out, static_cast<uint32_t>(f.data.size()));
         out.insert(out.end(), f.data.begin(), f.data.end());
     }
     return out;
@@ -2636,21 +2636,21 @@ bool ParseArchive(const std::vector<uint8_t>& buf, std::vector<StoredFile>& out)
     if (std::memcmp(&buf[0], ARCHIVE_MAGIC, 4) != 0) return false;   // マジック検証
     pos += 4;
 
-    if (!have(4)) return false;
-    uint32_t count = GetU32(&buf[pos]); pos += 4;
+    if (!have(1)) return false;
+    uint32_t count = LzGetLEB(buf.data(), pos);                       // ヘッダは LEB128
 
     for (uint32_t i = 0; i < count; ++i) {
-        if (!have(4)) return false;
-        uint32_t nlen = GetU32(&buf[pos]); pos += 4;
+        if (!have(1)) return false;
+        uint32_t nlen = LzGetLEB(buf.data(), pos);
         if (!have(nlen)) return false;
         std::string name(reinterpret_cast<const char*>(&buf[pos]), nlen); pos += nlen;
 
         if (!have(1)) return false;
         uint8_t algo = buf[pos]; pos += 1;
-        if (!have(8)) return false;
-        uint64_t origSize = GetU64(&buf[pos]); pos += 8;
-        if (!have(8)) return false;
-        uint64_t compSize = GetU64(&buf[pos]); pos += 8;
+        if (!have(1)) return false;
+        uint64_t origSize = LzGetLEB(buf.data(), pos);
+        if (!have(1)) return false;
+        uint64_t compSize = LzGetLEB(buf.data(), pos);
         if (!have(static_cast<size_t>(compSize))) return false;
 
         StoredFile e;

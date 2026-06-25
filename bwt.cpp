@@ -1072,7 +1072,7 @@ struct CMModel {
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(1048576 * NIN, 1 << 14), w3(1048576 * NIN, 1 << 14), w4(1048576 * NIN, 1 << 14), wf(32 * NMIX, 16384),
-                apm(16384 * 65), apm2(4096 * 65), apm3(2048 * 65), apm4(65536 * 65) {
+                apm(16384 * 65), apm2(4096 * 65), apm3(2048 * 65), apm4(131072 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
@@ -1080,7 +1080,7 @@ struct CMModel {
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
         for (int i = 0; i < 4096; ++i)
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
-        for (int i = 0; i < 65536; ++i)
+        for (int i = 0; i < 131072; ++i)
             for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
         for (int i = 0; i < 2048; ++i)
             for (int j = 0; j < 65; ++j)
@@ -1199,8 +1199,8 @@ struct CMModel {
             prf = (prf + ap3) >> 1;
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         }
-        // APM4: prf を cx[3]ハッシュ上位13bit+bitpos でさらに補正 (65点補間)
-        apm4Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 19) * 8 + bitpos);  // 65536文脈
+        // APM4: prf を cx[3]ハッシュ上位14bit+bitpos でさらに補正 (65点補間)
+        apm4Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> 18) * 8 + bitpos);  // 131072文脈
         {
             int s4 = CM_STR.v[prf] + 2048;
             apm4Wt = s4 & 63; int j4 = s4 >> 6;

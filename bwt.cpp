@@ -1017,6 +1017,10 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      6898,  6241,  5461,  4681,  4096,  4096, 4096, 4096
 };
+static const int CM_RATE_BMP[16] = {    // 画像 (BMP_CM) 用: 残差は定常なので遅い床
+    43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
+     6898,  6241,  5461,  4096,  3000,  2185, 1820, 1638
+};
 // ファイル種別ごとの CM パラメータ束 (rate プロファイル + ミキサー学習シフト)。
 // algo バイト由来で決まるので encode/decode で一致し完全可逆。
 // subShift: order-2/3/4 sub-mixer 文脈のハッシュ右シフト。小さいほど文脈が細かい
@@ -1025,7 +1029,7 @@ static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 
 // tbits: 文脈テーブル t2..t9 のサイズ指数 (1<<tbits)。データ豊富な exe のみ 28 (4.3GB)。
 struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
 static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_SLOW, 12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 28 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 27 };   // 音声 (WAV_CM, インターリーブ4B周期)
 

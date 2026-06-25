@@ -1950,7 +1950,7 @@ static inline uint16_t WavPredict(int order, uint16_t p1, uint16_t p2, uint16_t 
 }
 
 // ---- 真の LPC (線形予測符号化) ----
-static const int LPC_ORDER = 16;       // 予測次数 (8->16)
+static const int LPC_ORDER = 8;        // 予測次数 (LMS適応フィルタ追加で 16->8 が最良)
 static const uint8_t WAV_METHOD_LPC = 5;   // ブロック method 値 (0-4=固定, 5=LPC)
 
 // 整数 LPC 予測 (連続履歴, uint16 を int16 とみなす, シフトはブロック毎)。enc/dec で同一。

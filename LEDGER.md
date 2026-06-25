@@ -47,6 +47,18 @@
 | hal stride-2 | +1,665 | bpp=3 整列が最適 |
 | WAV FLAC風ステレオモード選択 | 未着手 | 複雑・効果不確実で見送り |
 
+## 第3セッション (2026-06-25, Linux環境, 4ファイル)
+### Linux環境ベースライン (4ファイル: explosion.wav, hal.bmp, wagahaiwa.txt, yuuki_256.bmp)
+- スコア: **783,555 bytes** (TeraPad.exe はgitignoreで除外)
+- 内訳: wav 269,403 / hal 226,933 / txt 227,685 / yuuki 59,386 (+ヘッダ計148バイト)
+- 全4ファイル round-trip OK, self-test PASS
+
+### イテレーション1: APM5（cx[4]+bitpos, 4096文脈）追加 → **失敗 +61B**
+- 何を: APMカスケードに第5段を追加。cx[4]のハッシュ上位9bit+bitpos = 4096文脈。
+- 結果: 783,555 → 783,616 (+61悪化)。wav +121, txt +6, yuuki -1, hal -65。
+- 理由: APMカスケード5段目で cx[4] が50%ウェイトを持ちすぎ、wavを希釈した模様。
+- **→ revert済み**
+
 ## 新セッション (2026-06-24 続き)
 ### 採用済み
 | アイデア | 効果 | 備考 |

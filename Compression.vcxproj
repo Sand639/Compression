@@ -143,7 +143,20 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bwt.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="transform.cpp" />
+    <ClCompile Include="huffman.cpp" />
+    <ClCompile Include="rangecoder.cpp" />
+    <ClCompile Include="cm.cpp" />
+    <ClCompile Include="lzss.cpp" />
+    <ClCompile Include="filters.cpp" />
+    <ClCompile Include="pipeline.cpp" />
+    <ClCompile Include="io.cpp" />
+    <ClCompile Include="archive.cpp" />
+    <ClCompile Include="selftest.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="compress.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

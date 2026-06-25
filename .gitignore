@@ -82,3 +82,8 @@ measure_*.cpp
 Thumbs.db
 Desktop.ini
 *.dmp
+# ローカル実行環境 (data がルートと重複するため追跡しない)
+実行フォルダ/
+
+# 復元検証の生成物 (実行で再生成されるため追跡しない)
+data_restored/

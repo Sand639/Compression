@@ -1,6 +1,10 @@
-# 可逆圧縮プログラム 自律改良タスク (bwt.cpp)
+# 可逆圧縮プログラム 自律改良タスク (main.cpp ほか分割モジュール)
 
-あなたは可逆圧縮プログラム `bwt.cpp` を自律的に改良し続けるエージェントです。
+あなたは可逆圧縮プログラムを自律的に改良し続けるエージェントです。
+コードは機能ごとに複数の `.cpp` に分割され、宣言は `compress.h` で共有しています
+（`main.cpp`=ドライバ/main、`transform.cpp`/`huffman.cpp`/`rangecoder.cpp`/`cm.cpp`/
+`lzss.cpp`/`filters.cpp`/`pipeline.cpp`/`io.cpp`/`archive.cpp`/`selftest.cpp`=アルゴリズム本体）。
+改良対象の関数があるモジュールを編集し、関数シグネチャを変えたら `compress.h` も更新すること。
 対話確認 (Pause) は一切せず、ターミナル実行ツールで自走してください。質問で止まらないこと。
 このセッションはいつ中断されるか分かりません（利用制限・ジョブ時間切れ）。
 **改善が通ったら必ず即コミット**し、未コミットの作業を長時間残さないこと。
@@ -38,7 +42,9 @@ LZSS は実行ファイルの命令列・写真・音声残差のような「弱
 
 - 最初のイテレーションで、次を一発で行う再現可能なスクリプトを `build_and_test.sh`（Linux/g++想定。
   Windowsなら `.bat`）として用意する:
-  1. `bwt.cpp` を最適化付き（例: `g++ -O2 -std=c++17 bwt.cpp -o bwt`）でビルド
+  1. 全モジュールを最適化付きでビルド（例:
+     `g++ -O2 -std=c++20 main.cpp transform.cpp huffman.cpp rangecoder.cpp cm.cpp lzss.cpp filters.cpp pipeline.cpp io.cpp archive.cpp selftest.cpp -o bwt`。
+     `build_and_test.sh` がこの一式を持つので、基本はそれを実行する）
   2. 実行して `data/` の5ファイルを `output.enc` へ圧縮し、`data_restored/` へ復元
   3. 全ファイルをバイト単位で完全一致比較
   - ソースが UTF-8 BOM 付きで g++ がエラーを出す場合は BOM を除去してよい（コメントは壊さないこと）。
@@ -73,7 +79,7 @@ LZSS は実行ファイルの命令列・写真・音声残差のような「弱
    BEST を更新し、`LEDGER.md` に「成功・削減量」を記録。`PROGRESS_COMPRESS.md` を更新。
 6. **不合格（サイズが縮まなかった、またはテスト失敗）の場合** →
    - 必ず `LEDGER.md` と `PROGRESS_COMPRESS.md` に「何を試して、なぜダメだったか（何バイト増えてしまったか等）」の詳細なレポートを追記してください。
-   - その後、プログラムの変更だけを `git restore bwt.cpp` 等で元に戻してください（メモファイルは絶対に戻さないこと）。
+   - その後、プログラムの変更だけを `git restore '*.cpp' '*.h'` で元に戻してください（`.md` のメモファイルは戻らないので安全。メモファイルは絶対に戻さないこと）。
    - そして、追記したメモファイルだけを `git add LEDGER.md PROGRESS_COMPRESS.md` して、`git commit -m "log: failed attempt (試した手法)"` として必ずコミットしてください。これにより失敗の痕跡を残します。
 7. 次のイテレーションへ。
 

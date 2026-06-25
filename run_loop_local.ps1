@@ -3,7 +3,7 @@
 # 5時間制限で落ちたら一定時間待ってから --continue で再開し、最大30セッション回す。
 #
 # 使い方
-#   1) このファイルと compress_prompt_local.md を、bwt.cpp と data があるフォルダに置く
+#   1) このファイルと compress_prompt_local.md を、main.cpp と data があるフォルダに置く
 #   2) PowerShell で  powershell -ExecutionPolicy Bypass -File .run_loop_local.ps1
 #
 # 注意 フラグ名は版で変わる。実行前に `claude --help` で

@@ -2,15 +2,15 @@
 // コンパイル: g++ -O1 -std=c++20 extract.cpp -o extract
 // 使い方: ./extract <archive.enc> <output_dir/>
 
-// bwt.cpp の内容をそのままインクルードする代わり、
+// main.cpp の内容をそのままインクルードする代わり、
 // 共有関数をコンパイル済みオブジェクトから使うのが理想だが、
-// 手っ取り早く bwt.cpp を #include する。
+// 手っ取り早く main.cpp を #include する。
 // メインを上書きするため先に定義。
 
 #define SKIP_MAIN 1
-// bwt.cpp の main() を無効化するために SKIP_MAIN マクロを使う方法は
-// bwt.cpp 側が対応していないので別アプローチ:
-// bwt.cpp をコピーして main を rename する。
+// main.cpp の main() を無効化するために SKIP_MAIN マクロを使う方法は
+// main.cpp 側が対応していないので別アプローチ:
+// main.cpp をコピーして main を rename する。
 
 // 代わりに直接 stdio で archive を parse して展開する小さな実装。
 

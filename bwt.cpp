@@ -2048,6 +2048,28 @@ static bool ParseWav(const std::vector<uint8_t>& in, size_t& dataStart, size_t& 
     return false;
 }
 
+// 符号-符号 LMS 適応フィルタ (Monkey's Audio 系)。ブロックLPC残差の、ブロック内非定常な
+// 短期相関を捉える。全演算を16bit(mod 2^16)に丸めるので enc/dec で状態が完全同期=可逆。
+struct WavLMS {
+    static const int K = 64, SH = 11;
+    int w[K] = {0}, h[K] = {0};
+    int16_t predict() const {
+        long long s = 0;
+        for (int k = 0; k < K; ++k) s += static_cast<long long>(w[k]) * h[k];
+        return static_cast<int16_t>(s >> SH);
+    }
+    void adapt(int16_t e) {
+        int se = e > 0 ? 1 : (e < 0 ? -1 : 0);
+        for (int k = 0; k < K; ++k) {
+            w[k] += se * (h[k] > 0 ? 1 : (h[k] < 0 ? -1 : 0));
+            if (w[k] < -(1 << 18)) w[k] = -(1 << 18); else if (w[k] > (1 << 18)) w[k] = (1 << 18);
+        }
+    }
+    void push(int16_t x) { for (int k = K - 1; k > 0; --k) h[k] = h[k - 1]; h[0] = x; }
+    int16_t enc(int16_t x) { int16_t p = predict(); int16_t e = static_cast<int16_t>(x - p); adapt(e); push(x); return e; }
+    int16_t dec(int16_t e) { int16_t p = predict(); int16_t x = static_cast<int16_t>(e + p); adapt(e); push(x); return x; }
+};
+
 // stereoMode: 0=Mid/Side, 1=Left/Side, 2=Right/Side, 3=Left/Right(独立)。先頭1バイトに保存。
 std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, int stereoMode = 0) {
     std::vector<uint8_t> out;
@@ -2137,8 +2159,9 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
         if (sideMethod[b] == WAV_METHOD_LPC) { out.push_back(sideShift[b]); for (int j = 0; j < LPC_ORDER; ++j) putI16(sideCoef[b * LPC_ORDER + j]); }
     }
 
-    // 各フレームを所属ブロックの手法で予測 -> バイトプレーン分離 (履歴は連続)
+    // 各フレームを所属ブロックの手法で予測 -> LMS適応フィルタ -> バイトプレーン分離 (履歴は連続)
     std::vector<uint8_t> midLo(frames), midHi(frames), sideLo(frames), sideHi(frames);
+    WavLMS lmsM, lmsS;
     for (size_t i = 0; i < frames; ++i) {
         size_t b = i / BS;
         uint16_t mpred, spred;
@@ -2146,8 +2169,8 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
         else { uint16_t p1=(i>=1)?mid[i-1]:0,p2=(i>=2)?mid[i-2]:0,p3=(i>=3)?mid[i-3]:0,p4=(i>=4)?mid[i-4]:0; mpred = WavPredict(midMethod[b],p1,p2,p3,p4); }
         if (sideMethod[b] == WAV_METHOD_LPC) spred = static_cast<uint16_t>(WavLpcPredict(side.data(), i, &sideCoef[b * LPC_ORDER], sideShift[b]));
         else { uint16_t p1=(i>=1)?side[i-1]:0,p2=(i>=2)?side[i-2]:0,p3=(i>=3)?side[i-3]:0,p4=(i>=4)?side[i-4]:0; spred = WavPredict(sideMethod[b],p1,p2,p3,p4); }
-        uint16_t mr = static_cast<uint16_t>(mid[i]  - mpred);
-        uint16_t sr = static_cast<uint16_t>(side[i] - spred);
+        uint16_t mr = static_cast<uint16_t>(lmsM.enc(static_cast<int16_t>(mid[i]  - mpred)));
+        uint16_t sr = static_cast<uint16_t>(lmsS.enc(static_cast<int16_t>(side[i] - spred)));
         midLo[i]  = static_cast<uint8_t>(mr);       midHi[i]  = static_cast<uint8_t>(mr >> 8);
         sideLo[i] = static_cast<uint8_t>(sr);       sideHi[i] = static_cast<uint8_t>(sr >> 8);
     }
@@ -2191,11 +2214,14 @@ std::vector<uint8_t> Decode_Wav_MidSide_Delta(const std::vector<uint8_t>& in) {
 
     // 残差から各チャンネル値を逆予測で復元 (ブロックごとに手法切替, 履歴は連続)
     std::vector<uint16_t> mid(frames), side(frames);
+    WavLMS lmsM, lmsS;
     for (uint32_t i = 0; i < frames; ++i) {
         size_t b = i / blockSize;
         uint8_t mMethod = methods[2 * b], sMethod = methods[2 * b + 1];
-        uint16_t mr = static_cast<uint16_t>(fp[4 * i]     | (fp[4 * i + 1] << 8));
-        uint16_t sr = static_cast<uint16_t>(fp[4 * i + 2] | (fp[4 * i + 3] << 8));
+        uint16_t me = static_cast<uint16_t>(fp[4 * i]     | (fp[4 * i + 1] << 8));   // LMS残差
+        uint16_t se = static_cast<uint16_t>(fp[4 * i + 2] | (fp[4 * i + 3] << 8));
+        uint16_t mr = static_cast<uint16_t>(lmsM.dec(static_cast<int16_t>(me)));     // LPC残差へ復元
+        uint16_t sr = static_cast<uint16_t>(lmsS.dec(static_cast<int16_t>(se)));
         uint16_t mpred, spred;
         if (mMethod == WAV_METHOD_LPC) mpred = static_cast<uint16_t>(WavLpcPredict(mid.data(), i, &midCoef[b * LPC_ORDER], midShift[b]));
         else { uint16_t p1=(i>=1)?mid[i-1]:0,p2=(i>=2)?mid[i-2]:0,p3=(i>=3)?mid[i-3]:0,p4=(i>=4)?mid[i-4]:0; mpred = WavPredict(mMethod,p1,p2,p3,p4); }

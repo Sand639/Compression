@@ -1,125 +1,39 @@
 // main.cpp — 可逆圧縮プログラムのドライバ (エントリポイント)
 //
+// 起動するとコンソールで圧縮(1)/展開(2)を選び、対象名を入力して処理する:
+//   圧縮 : 入力したフォルダ/ファイルを「入力名.arc」へトーナメント圧縮する。
+//   展開 : 入力した .arc を「ベース名_restored(必要なら連番)」フォルダへ展開する。
 // アルゴリズム本体は機能ごとに分割した各 .cpp に置き、宣言は compress.h で共有する
-// (transform / huffman / rangecoder / cm / lzss / filters / pipeline / io / archive /
-//  selftest)。このファイルは main と、ダミーデータ生成・フォルダ一致検証だけを持つ。
-//
-// 本番動作: data/ を 1 ファイル (output.enc) にトーナメント圧縮 -> data_restored/ へ
-//           復元 -> 完全一致を検証する。data/ は読み取りのみ。
+// (transform / huffman / rangecoder / cm / lzss / filters / pipeline / io / archive / selftest)。
 //
 // ビルド (g++):
 //   g++ -O2 -std=c++20 main.cpp transform.cpp huffman.cpp rangecoder.cpp cm.cpp \
 //       lzss.cpp filters.cpp pipeline.cpp io.cpp archive.cpp selftest.cpp -o bwt
 #include "compress.h"
 
-static void PrepareDummyData(const fs::path& dir) {
-    std::error_code ec;
-    fs::remove_all(dir, ec);             // 毎回まっさらにして再現性を確保
-    fs::create_directories(dir, ec);
-
-    // 1) テキスト (繰り返しが多く圧縮しやすい)
-    {
-        std::string s;
-        for (int i = 0; i < 2000; ++i)
-            s += "The quick brown fox jumps over the lazy dog. ";
-        WriteFileFs(dir / "lorem.txt", Str(s));
-    }
-    // 2) 短いテキスト
-    WriteFileFs(dir / "hello.txt", Str("Hello, Archive!\nこんにちは、アーカイブ！\n"));
-
-    // 3) バイナリ (ゼロ連 + 擬似乱数を混在)
-    {
-        std::vector<uint8_t> v;
-        std::mt19937 rng(7);
-        std::uniform_int_distribution<int> byte(0, 255);
-        for (int blk = 0; blk < 200; ++blk) {
-            for (int z = 0; z < 50; ++z) v.push_back(0x00);              // ゼロ連
-            for (int r = 0; r < 30; ++r) v.push_back((uint8_t)byte(rng)); // 乱数
-        }
-        WriteFileFs(dir / "binary.dat", v);
-    }
-    // 4) サブフォルダ内のファイル (相対パス保持の検証)
-    WriteFileFs(dir / "sub" / "note.txt", Str("nested file in subfolder\n"));
-
-    // 5) Store ルート確認用: 既圧縮を模した拡張子 (.jpg / .zip) に乱雑なバイト列
-    {
-        std::vector<uint8_t> v(8000);
-        std::mt19937 rng(55);
-        std::uniform_int_distribution<int> byte(0, 255);
-        for (auto& b : v) b = static_cast<uint8_t>(byte(rng));
-        WriteFileFs(dir / "already.jpg", v);
-        WriteFileFs(dir / "pack.zip",    v);
-    }
-
-    // 6) LZSS ルート確認用: 反復の多いバイナリ (.exe)
-    {
-        std::vector<uint8_t> v;
-        std::mt19937 rng(99);
-        std::uniform_int_distribution<int> byte(0, 255);
-        const char* phrase = "MZ_program_text_section_data_";
-        for (int i = 0; i < 4000; ++i) {
-            for (const char* q = phrase; *q; ++q) v.push_back(static_cast<uint8_t>(*q));
-            if (i % 9 == 0)                              // たまにノイズを混ぜる
-                for (int r = 0; r < 16; ++r) v.push_back(static_cast<uint8_t>(byte(rng)));
-        }
-        WriteFileFs(dir / "dummy.exe", v);
-    }
-
-    // 7) 実画像があれば取り込む (TEST/pika.bmp -> BWT ルート)
-    for (const char* cand : {"TEST/pika.bmp", "TEST/pika256.bmp"}) {
-        fs::path src(cand);
-        if (fs::exists(src)) { fs::copy_file(src, dir / src.filename(), fs::copy_options::overwrite_existing, ec); break; }
-    }
-
-    // 8) 実 exe があれば取り込む (data/ は読むだけ、LZSS ルートの実データ検証)
-    {
-        fs::path src("data/TeraPad.exe");
-        if (fs::exists(src)) fs::copy_file(src, dir / "TeraPad_copy.exe", fs::copy_options::overwrite_existing, ec);
-    }
-
-    // 9) 実 WAV/BMP があれば取り込む (Delta+LZSS ルートの実データ検証, data/ は読むだけ)
-    for (const char* f : {"data/explosion.wav", "data/hal.bmp", "data/yuuki_256.bmp"}) {
-        fs::path src(f);
-        if (fs::exists(src)) fs::copy_file(src, dir / src.filename(), fs::copy_options::overwrite_existing, ec);
-    }
+// 入力文字列の前後の空白・改行を取り除く。
+static std::string TrimInput(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return std::string();
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
 }
 
-// ==========================================================================
-// data/ と data_restored/ を全ファイル完全一致比較
-// ==========================================================================
-static bool VerifyFolders(const fs::path& a, const fs::path& b) {
-    bool all = true;
-    size_t n = 0;
-    for (const auto& de : fs::recursive_directory_iterator(a)) {
-        if (!de.is_regular_file()) continue;
-        ++n;
-        fs::path rel = fs::relative(de.path(), a);
-        fs::path other = b / rel;
-
-        std::vector<uint8_t> da, db;
-        bool ra = ReadFileFs(de.path(), da);
-        bool rb = ReadFileFs(other, db);
-        bool ok = ra && rb && (da == db);
-        all &= ok;
-        std::cout << (ok ? "  [OK]   " : "  [FAIL] ")
-                  << PathToUtf8(rel) << "  (" << da.size() << " B)";
-        if (!rb) std::cout << "  <- 復元先に存在しません";
-        else if (ra && da != db) std::cout << "  <- 内容不一致!!";
-        std::cout << "\n";
-    }
-    std::cout << (all ? "[OK] " : "[FAIL] ") << n << " files matched\n";
-    return all;
+// 文字列の末尾が ".arc" かどうか (大文字小文字は区別しない)。
+static bool HasArcExt(const std::string& s) {
+    if (s.size() < 4) return false;
+    std::string tail = s.substr(s.size() - 4);
+    for (char& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return tail == ".arc";
 }
 
-// ==========================================================================
-// メイン: data/ を 1 ファイルに圧縮 -> data_restored/ へ復元 -> 完全一致検証
-// ==========================================================================
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleOutputCP(65001);   // コンソール出力を UTF-8 に (文字化け対策)
+    SetConsoleCP(65001);         // コンソール入力も UTF-8 に (日本語のファイル名対応)
 #endif
 
-    // --extract <archive.enc> <outdir/> : アーカイブからファイルを展開する (開発用)
+    // --extract <archive.arc> <outdir/> : アーカイブを展開する (開発用・引数指定)
     if (argc >= 4 && std::string(argv[1]) == "--extract") {
         std::vector<uint8_t> archive;
         if (!ReadFileFs(fs::path(argv[2]), archive)) {
@@ -147,52 +61,89 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // ---- アルゴリズムのセルフテスト ----
-    if (!RunSelfTests()) {
-        std::cout << "アルゴリズムのセルフテストに失敗しました。\n";
+    // ==================================================================
+    // 圧縮 / 展開 の選択 (1 か 2 以外は再入力)
+    // ==================================================================
+    int mode = 0;
+    while (true) {
+        std::cout << "圧縮:1 展開:2\n入力:";
+        std::cout.flush();
+        std::string line;
+        if (!std::getline(std::cin, line)) return 0;   // 入力終端(EOF)で終了
+        std::string in = TrimInput(line);
+        if (in == "1") { mode = 1; break; }
+        if (in == "2") { mode = 2; break; }
+        std::cout << "1 または 2 を入力してください。\n";
+    }
+
+    if (mode == 1) {
+        // ============================ 圧縮 ============================
+        // 圧縮するフォルダ/ファイル名を入力させ、存在するまで再入力を促す。
+        std::string target;
+        fs::path    targetPath;
+        while (true) {
+            std::cout << "圧縮するフォルダ名またはファイル名を入力:";
+            std::cout.flush();
+            std::string line;
+            if (!std::getline(std::cin, line)) return 0;
+            target = TrimInput(line);
+            if (target.empty()) {
+                std::cout << "入力が空です。もう一度入力してください。\n";
+                continue;
+            }
+            targetPath = Utf8ToPath(target);
+            if (fs::exists(targetPath)) break;
+            std::cout << "「" << target << "」が見つかりません。もう一度入力してください。\n";
+        }
+
+        // 出力名 = 入力文字列 + ".arc"
+        const std::string outName = target + ".arc";
+        const fs::path    outPath = Utf8ToPath(outName);
+
+        std::cout << "\n=== 圧縮 (" << target << " -> " << outName << ") ===\n";
+        if (!CompressFolder(targetPath, outPath)) {
+            std::cout << "[ERROR] 圧縮に失敗しました。\n";
+            return 1;
+        }
+        std::cout << "圧縮完了 -> " << outName << "\n";
+        return 0;
+    }
+
+    // ============================ 展開 ============================
+    // 展開する .arc を入力させる。拡張子が無ければ ".arc" を補い、存在するまで再入力を促す。
+    std::string arcName;
+    fs::path    arcPath;
+    while (true) {
+        std::cout << "展開するファイル名を入力:";
+        std::cout.flush();
+        std::string line;
+        if (!std::getline(std::cin, line)) return 0;
+        std::string in = TrimInput(line);
+        if (in.empty()) {
+            std::cout << "入力が空です。もう一度入力してください。\n";
+            continue;
+        }
+        arcName = HasArcExt(in) ? in : (in + ".arc");   // .arc が無ければ補う (あれば付け足さない)
+        arcPath = Utf8ToPath(arcName);
+        if (fs::exists(arcPath)) break;
+        std::cout << "「" << arcName << "」が見つかりません。もう一度入力してください。\n";
+    }
+
+    // 展開先フォルダ名 = (".arc" を除いたベース名) + "_restored"。
+    // 既存フォルダ(元データ等)と被る場合は連番を付けて衝突を避ける。
+    const std::string base = arcName.substr(0, arcName.size() - 4);   // 末尾 ".arc" を除く
+    std::string outName = base + "_restored";
+    fs::path    outDir  = Utf8ToPath(outName);
+    for (int k = 2; fs::exists(outDir); ++k) {
+        outName = base + "_restored" + std::to_string(k);
+        outDir  = Utf8ToPath(outName);
+    }
+
+    std::cout << "\n=== 展開 (" << arcName << " -> " << outName << "/) ===\n";
+    if (!DecompressArchive(arcPath, outDir)) {
+        std::cout << "[ERROR] 展開に失敗しました。\n";
         return 1;
     }
-    std::cout << "\n";
-
-    // ====================================================================
-    // 本番データ data/ をトーナメント圧縮 -> data_restored/ へ復元 -> 完全一致検証
-    //   data/ は読み取りのみ (PrepareDummyData は呼ばない)。
-    // ====================================================================
-    const fs::path inputDir   = "data";            // 本番コンテストデータ
-    const fs::path outputFile = "output.enc";      // 圧縮済み 1 ファイル
-    const fs::path restoreDir = "data_restored";   // 復元先フォルダ
-    // --------------------------------------------------------------------
-
-    std::cout << "=== archive round-trip test (tournament) ===\n";
-    std::cout << "cwd        : " << fs::current_path().string() << "\n";
-
-    // ---- 1. 圧縮: data/ -> output.enc (各ファイル全方式トーナメント) ----
-    if (!CompressFolder(inputDir, outputFile)) return 1;
-
-    // 参考: 7z (data.7z) との比較
-    {
-        std::error_code ec;
-        auto enc = fs::file_size(outputFile, ec);
-        const uint64_t kSevenZip = 1640836;   // data.7z の実測サイズ
-        if (!ec) {
-            std::printf("           vs 7z(data.7z)=%llu B : %s (diff %+lld B)\n",
-                        (unsigned long long)kSevenZip,
-                        enc < kSevenZip ? "WIN" : "lose",
-                        (long long)enc - (long long)kSevenZip);
-        }
-    }
-
-    // ---- 2. 復元: output.enc -> data_restored/ ----
-    {
-        std::error_code ec;
-        fs::remove_all(restoreDir, ec);            // 前回の残骸を除去
-    }
-    if (!DecompressArchive(outputFile, restoreDir)) return 1;
-
-    // ---- 3. 完全一致検証 ----
-    std::cout << "verify     :\n";
-    bool ok = VerifyFolders(inputDir, restoreDir);
-
-    std::cout << "\nround-trip : " << (ok ? "[OK] 全ファイル完全一致" : "[FAIL] 不一致!!") << "\n";
-    return ok ? 0 : 1;
+    std::cout << "展開完了 -> " << outName << "/\n";
+    return 0;
 }

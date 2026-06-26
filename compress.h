@@ -40,6 +40,7 @@ namespace fs = std::filesystem;
 // Windows コンソールを UTF-8 に切り替える API (windows.h を避けて前方宣言)。
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int wCodePageID);
+extern "C" __declspec(dllimport) int __stdcall SetConsoleCP(unsigned int wCodePageID);
 #endif
 
 // ==========================================================================

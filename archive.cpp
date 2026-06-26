@@ -176,32 +176,42 @@ static StoredFile CompressFileTournament(const std::string& name,
     return best;
 }
 
-// 入力フォルダを再帰スキャン -> 各ファイルをトーナメントで圧縮 -> 1 ファイル出力
-bool CompressFolder(const fs::path& inputDir, const fs::path& outputFile) {
-    if (!fs::exists(inputDir) || !fs::is_directory(inputDir)) {
-        std::cout << "[ERROR] 入力フォルダがありません: " << inputDir.string() << "\n";
+// 入力(フォルダ or 単一ファイル)を走査 -> 各ファイルをトーナメントで圧縮 -> 1 ファイル出力
+bool CompressFolder(const fs::path& inputPath, const fs::path& outputFile) {
+    if (!fs::exists(inputPath)) {
+        std::cout << "[ERROR] 入力が見つかりません: " << inputPath.string() << "\n";
         return false;
     }
 
     std::vector<StoredFile> files;
     uint64_t totalOrig = 0;
-    for (const auto& de : fs::recursive_directory_iterator(inputDir)) {
-        if (!de.is_regular_file()) continue;
 
+    // 1 ファイルをトーナメント圧縮して files に追加する
+    auto addOne = [&](const fs::path& filePath, const std::string& name) -> bool {
         std::vector<uint8_t> raw;
-        if (!ReadFileFs(de.path(), raw)) {
-            std::cout << "[ERROR] 読込失敗: " << de.path().string() << "\n";
+        if (!ReadFileFs(filePath, raw)) {
+            std::cout << "[ERROR] 読込失敗: " << filePath.string() << "\n";
             return false;
         }
-
-        std::string name = PathToUtf8(fs::relative(de.path(), inputDir));
         StoredFile e = CompressFileTournament(name, raw);
         totalOrig += raw.size();
-
         double saved = raw.size() ? 100.0 - 100.0 * e.data.size() / raw.size() : 0.0;
         std::printf("  %-24s %9zu -> %9zu B  [%-11s] Saved %5.1f%%\n",
                     name.c_str(), raw.size(), e.data.size(), AlgoName(e.algo), saved);
         files.push_back(std::move(e));
+        return true;
+    };
+
+    if (fs::is_directory(inputPath)) {
+        // フォルダ: 再帰スキャンし、相対パスを名前として格納
+        for (const auto& de : fs::recursive_directory_iterator(inputPath)) {
+            if (!de.is_regular_file()) continue;
+            std::string name = PathToUtf8(fs::relative(de.path(), inputPath));
+            if (!addOne(de.path(), name)) return false;
+        }
+    } else {
+        // 単一ファイル: ファイル名のみを名前として格納
+        if (!addOne(inputPath, PathToUtf8(inputPath.filename()))) return false;
     }
 
     std::vector<uint8_t> archive = BuildArchive(files);

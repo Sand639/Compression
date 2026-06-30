@@ -61,10 +61,10 @@ struct BinaryRangeDecoder {
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
-    static const int NIN = 13;                     // o0..o8,stride3,match,match2(6B),match3(8B)
+    static const int NIN = 14;                     // o0..o8,stride3,match,match2(6B),match3(8B),sjis2byte
     const int TBITS, TSIZE, TMASK;                  // t2..t9 のサイズ (プロファイル依存)
     static const int SM = 1 << 24;
-    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;  // ビット確率 (12bit, 初期 2048; t10=SJIS文脈)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
@@ -82,6 +82,7 @@ struct CMModel {
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
     uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 第3マッチモデル (8バイトハッシュ)
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
+    int sjisTrail = 0;                              // 直前が SJIS リードバイト → 現在トレイル位置
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
     int ms_apm = 0;                                // 8段階 match strength (APM3専用)
@@ -100,7 +101,7 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), t10(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         uint16_t initv[65];

@@ -19,6 +19,20 @@
 - 本番トーナメント: **1,168,281 → 1,168,065 B (-216)**。セルフテストPASS、
   本番アーカイブ展開後5/5 SHA-256一致。`output.enc`もARC4へ更新。
 
+### イテレーション3: hal.bmp 3-byte位相別order-0事前確率 → **成功 -590 B**
+- BMP予測後のhal.bmpから、3バイト位相 × bit-prefixの768確率を学習（bmp_train.cpp）。
+  BMPプロファイルのt0表を3位相別に分離（4*512エントリ）し、BMP_PRIORで初期化。
+  cold start時のチャンネル別バイト分布を直接モデル化。
+- measure: hal.bmp **226,793 → 226,203 B (-590)**、他4ファイル不変。
+  payload **1,167,953 → 1,167,363 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMビットストリーム非互換のためARC4→ARC5へ更新。
+- 本番: **data.arc = 1,167,475 B（1,168,065 → -590 B)**。5/5 SHA-256一致。output.enc更新。
+
+### イテレーション4: explosion.wav 4-byte位相別order-0事前確率（着手）
+- WAV変換後のexplosion.wav（bestMode=0）から、4バイト位相 × bit-prefixの1024確率を学習。
+  WAVプロファイルのt0表を4位相別に使用し（既存の4*512で十分）、WAV_PRIORで初期化。
+  次の候補: measure で効果確認予定。
+
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 
 ### session-start BEST

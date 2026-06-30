@@ -26,6 +26,14 @@
 - 既存の行別GAP/MED選択後の残差には単純な勾配文脈バイアスが残っておらず、補正により
   CMが利用していた残差分布を乱したと判断。コードはrevert。
 
+### イテレーション2: order-4 ICM + StateMap → **失敗 +2,035 B・revert**
+- 疎なorder-4ビット文脈ごとに4bit×2のビット履歴状態を保持し、256状態で確率を共有する
+  ICM/StateMapをミキサー入力へ追加。直接カウンタとは異なる共有学習でcold startを補う狙い。
+- measure結果: exe +1,130 / wav +36 / txt +489 / hal +161 / yuuki +219 B、
+  payload **1,171,053 → 1,173,088 B (+2,035)**。セルフテストPASS、round-trip 5/5 OK。
+- 既存order-4直接カウンタと情報が重複し、共有StateMap自体のcold startも加わってミキサーを希釈。
+  学習率の微調整には進まず、構造ごとrevert。
+
 ## ★ local-baseline (本物5ファイル, 2026-06-24) — 現行の唯一有効な基準
 - **スコア**: 1,306,118 bytes (output.enc, 5ファイル)。round-trip 5/5 exact, 7z を 334,718 B 上回る。
 - 内訳: TeraPad.exe BCJ+CM 492,658 / explosion.wav WAV+CM 270,125 / wagahaiwa.txt CM 244,659 /

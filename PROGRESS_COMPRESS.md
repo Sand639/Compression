@@ -7,9 +7,12 @@
   本番 **BEST 1,168,281→1,168,065 B (-216)**。ARC4、セルフテストPASS、5/5 SHA-256一致。
 - hal.bmp 3-byte位相別order-0事前確率: **成功**。hal 226,793→226,203 B (-590)、他不変。
   本番 **BEST 1,168,065→1,167,475 B (-590)**。ARC5、セルフテストPASS、5/5 SHA-256一致。
-- 現在のBEST: **1,167,475 B**。内訳 exe 424,270 / wav 230,887 / txt 226,633 /
-  hal 226,203 / yuuki 59,370 B（payload 1,167,363 B + ARC5ヘッダ112 B）。
-- 次の試み: explosion.wav WAV_PRIOR（4-byte位相別order-0事前確率）。
+- explosion.wav WAV_PRIOR（4-byte位相別order-0事前確率）: **成功**。wav 230,887→230,139 B (-748)、
+  yuuki 59,370→59,635 B (+265)、net -483 B。本番 **BEST 1,167,475→1,166,992 B (-483)**。
+  ARC6、セルフテストPASS、5/5 SHA-256一致。
+- 現在のBEST: **1,166,992 B**。内訳 exe 424,270 / wav 230,139 / txt 226,633 /
+  hal 226,203 / yuuki 59,635 B（payload 1,166,880 B + ARC6ヘッダ112 B）。
+- 次の試み: TeraPad.exe ModRM/SIB文脈 or テキストSJIS 2-gram 遷移文脈。
 
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 - 起動時の本物5ファイルは全て期待サイズと一致。

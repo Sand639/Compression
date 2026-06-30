@@ -101,8 +101,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// BMP 3-byte位相別order-0事前確率でBMPビットストリームが非互換になったためARC5へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '5'};
+// WAV 4-byte位相別order-0事前確率でWAVビットストリームが非互換になったためARC6へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '6'};
 
 // ==========================================================================
 // CM プロファイル

@@ -28,10 +28,15 @@
 - CMビットストリーム非互換のためARC4→ARC5へ更新。
 - 本番: **data.arc = 1,167,475 B（1,168,065 → -590 B)**。5/5 SHA-256一致。output.enc更新。
 
-### イテレーション4: explosion.wav 4-byte位相別order-0事前確率（着手）
+### イテレーション4: explosion.wav 4-byte位相別order-0事前確率 → **成功 -483 B**
 - WAV変換後のexplosion.wav（bestMode=0）から、4バイト位相 × bit-prefixの1024確率を学習。
   WAVプロファイルのt0表を4位相別に使用し（既存の4*512で十分）、WAV_PRIORで初期化。
-  次の候補: measure で効果確認予定。
+- measure: explosion.wav **230,887 → 230,139 B (-748)**、yuuki **59,370 → 59,635 B (+265)**、
+  payload 1,167,363 → 1,166,880 B（net -483）。セルフテストPASS、round-trip 5/5 OK。
+- yuuki悪化: explosion.wav統計をyuuki（インデックス画像）に適用するため cold start が合わない。
+  yuukiは引き続きWAV+CMが最小(59,635)だが、BMP_PRIOR前の水準(59,370)より若干悪化。
+- CMビットストリーム非互換のためARC5→ARC6へ更新。
+- 本番: **data.arc = 1,166,992 B（1,167,475 → -483 B)**。5/5 SHA-256一致。output.enc更新。
 
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 

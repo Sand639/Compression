@@ -10,6 +10,7 @@
   payload計1,171,053 B。セルフテストPASS、展開後5/5 SHA-256一致。
 - イテレーション1 CALIC風勾配文脈バイアス: hal +174 B、他不変。可逆性/PASSだが悪化のためrevert。
 - イテレーション2 order-4 ICM+StateMap: payload +2,035 B（全5ファイル悪化）。可逆性/PASS、revert。
+- イテレーション3 64-tap固定小数点NLMS: explosion.wav +3,046 B、他不変。可逆性/PASS、revert。
 
 ## 第3セッション (2026-06-25, --continue) — WAV大幅改善
 - 第2セッション(autoによる継続, 実機HEAD 1,209,808)の上で再開。STOPファイルは無視指示。

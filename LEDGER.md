@@ -34,6 +34,14 @@
 - 既存order-4直接カウンタと情報が重複し、共有StateMap自体のcold startも加わってミキサーを希釈。
   学習率の微調整には進まず、構造ごとrevert。
 
+### イテレーション3: 64-tap固定小数点NLMS → **失敗 +3,046 B・revert**
+- WAVの単段sign-sign LMSを、履歴エネルギーで係数更新量を正規化する64-tap NLMSへ置換。
+  非定常な爆発音の振幅変化へ安定して追従し、LPC後残差をさらに白色化する狙い。
+- measure結果: explosion.wav **230,887 → 233,933 B (+3,046)**、他4ファイル不変。
+  セルフテストPASS、round-trip 5/5 OK。
+- LPC後残差には振幅比例の正規化更新より、現行sign-signの一定ステップが速く追従できる。
+  NLMS定数の微調整には進まずrevert。
+
 ## ★ local-baseline (本物5ファイル, 2026-06-24) — 現行の唯一有効な基準
 - **スコア**: 1,306,118 bytes (output.enc, 5ファイル)。round-trip 5/5 exact, 7z を 334,718 B 上回る。
 - 内訳: TeraPad.exe BCJ+CM 492,658 / explosion.wav WAV+CM 270,125 / wagahaiwa.txt CM 244,659 /

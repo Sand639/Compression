@@ -12,7 +12,7 @@
 //   filters.cpp    : Delta / BCJ / WAV / BMP 予測フィルタ
 //   pipeline.cpp   : ブロック分割 BWT パイプライン
 //   io.cpp         : ファイル / パス入出力
-//   archive.cpp    : ARC1 コンテナ + ファイル単位トーナメント圧縮 + フォルダ圧縮/復元
+//   archive.cpp    : ARC2 コンテナ + ファイル単位トーナメント圧縮 + フォルダ圧縮/復元
 //   selftest.cpp   : アルゴリズムの自己テスト
 //   main.cpp       : ドライバ (main / ダミーデータ生成 / 一致検証)
 //
@@ -101,7 +101,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '1'};
+// CM/x86モデル追加で旧ビットストリームと非互換になったためARC2へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '2'};
 
 // ==========================================================================
 // CM プロファイル
@@ -201,7 +202,7 @@ bool WriteFileFs(const std::filesystem::path& path, const std::vector<uint8_t>& 
 std::string PathToUtf8(const std::filesystem::path& p);
 std::filesystem::path Utf8ToPath(const std::string& s);
 
-// ---- archive.cpp (ARC1 コンテナ / ファイル単位圧縮 / フォルダ圧縮・復元) ----
+// ---- archive.cpp (ARC2 コンテナ / ファイル単位圧縮 / フォルダ圧縮・復元) ----
 std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in);
 std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in, uint64_t originalSize);
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files);

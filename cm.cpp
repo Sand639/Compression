@@ -61,10 +61,12 @@ struct BinaryRangeDecoder {
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
-    static const int NIN = 13;                     // o0..o8,stride3,match,match2(6B),match3(8B)
+    static const int NIN = 14;                     // o0..o8,stride3,match x3,x86 operand
     const int TBITS, TSIZE, TMASK;                  // t2..t9 のサイズ (プロファイル依存)
     static const int SM = 1 << 24;
+    static const int EXE_BITS = 22, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
+    std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST専用)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
@@ -82,6 +84,8 @@ struct CMModel {
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
     uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 第3マッチモデル (8バイトハッシュ)
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
+    bool isExe = false, exeActive = false;
+    int exeRemain = 0, exeClass = 0, exeOpcode = 0;
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
     int ms_apm = 0;                                // 8段階 match strength (APM3専用)
@@ -100,9 +104,10 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
+        isExe = prof.tbits == 29;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 32768; ++i)
@@ -178,6 +183,18 @@ struct CMModel {
                 int conf = (matchLen3 < 28 ? matchLen3 : 28) * 72;
                 st[12] = predBit ? conf : -conf;
             }
+        }
+        // x86 operand model: opcode と immediate/relative operand 内のバイト位置を共有文脈化。
+        // BCJ後のrel32は各バイト位置で分布が大きく異なるため、通常のbyte-order文脈と分離する。
+        st[13] = 0;
+        exeActive = isExe && exeRemain > 0;
+        if (exeActive) {
+            uint32_t eh = static_cast<uint32_t>(c0);
+            eh = eh * 0x9E3779B1u + static_cast<uint32_t>(exeOpcode + 1);
+            eh = eh * 0x9E3779B1u + static_cast<uint32_t>((exeClass << 3) | exeRemain);
+            eh = eh * 0x9E3779B1u + static_cast<uint32_t>(buf.size() & 15);
+            idx[13] = static_cast<int>(eh & EXE_MASK);
+            st[13] = CM_STR.v[tExe[idx[13]] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
@@ -285,10 +302,21 @@ struct CMModel {
         };
         upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]);
         upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]); upd(t7, idx[7]); upd(t8, idx[8]); upd(t9, idx[9]);
+        if (exeActive) upd(tExe, idx[13]);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;
             buf.push_back(static_cast<uint8_t>(B));
+            if (isExe) {
+                if (exeRemain > 0) {
+                    --exeRemain;
+                    if (exeRemain == 0) { exeClass = 0; exeOpcode = 0; }
+                } else if (B == 0xE8 || B == 0xE9) {
+                    exeClass = 1; exeOpcode = B; exeRemain = 4;          // CALL/JMP rel32 (BCJ対象)
+                } else if (B >= 0xB8 && B <= 0xBF) {
+                    exeClass = 2; exeOpcode = B; exeRemain = 4;          // MOV reg, imm32
+                }
+            }
             if (matchPtr > 0 && matchPtr < buf.size() - 1 && buf[matchPtr] == B) { ++matchPtr; ++matchLen; }
             else { matchPtr = 0; matchLen = 0; }
             if (matchPtr2 > 0 && matchPtr2 < buf.size() - 1 && buf[matchPtr2] == B) { ++matchPtr2; ++matchLen2; }

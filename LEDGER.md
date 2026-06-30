@@ -42,6 +42,15 @@
 - LPC後残差には振幅比例の正規化更新より、現行sign-signの一定ステップが速く追従できる。
   NLMS定数の微調整には進まずrevert。
 
+### イテレーション4: x86オペランド位置モデル → **成功 -2,145 B**
+- BCJ後のE8/E9 rel32とB8-BF imm32を追跡し、opcodeとオペランド内バイト位置別の
+  小型確率表をFASTプロファイルのミキサーへ追加。命令とデータの混在を明示的に分離する狙い。
+- measure結果: TeraPad.exe **426,631 → 424,486 B (-2,145)**、他4ファイルは完全不変。
+  payload **1,171,053 → 1,168,908 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMストリームが非互換になるため、アーカイブmagicをARC1→ARC2へ更新。
+- 本番トーナメント: **1,171,165 → 1,169,020 B (-2,145)**。内訳はmeasureと一致し、
+  セルフテストPASS、本番アーカイブ展開後5/5 SHA-256一致。`output.enc`もARC2へ更新。
+
 ## ★ local-baseline (本物5ファイル, 2026-06-24) — 現行の唯一有効な基準
 - **スコア**: 1,306,118 bytes (output.enc, 5ファイル)。round-trip 5/5 exact, 7z を 334,718 B 上回る。
 - 内訳: TeraPad.exe BCJ+CM 492,658 / explosion.wav WAV+CM 270,125 / wagahaiwa.txt CM 244,659 /

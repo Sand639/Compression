@@ -76,7 +76,7 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM, ALGO_BMP_CM2
 };
 
-// ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
+// ---- コンテナの構築 / 解析 (フォーマット 'ARC2') ----
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files) {
     std::vector<uint8_t> out;
     out.insert(out.end(), ARCHIVE_MAGIC, ARCHIVE_MAGIC + 4);

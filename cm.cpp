@@ -61,12 +61,14 @@ struct BinaryRangeDecoder {
 //   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
 //   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
 struct CMModel {
-    static const int NIN = 14;                     // o0..o8,stride3,match x3,x86 operand
+    static const int NIN = 15;                     // o0..o8,stride3,match x3,x86 operand,SJIS text
     const int TBITS, TSIZE, TMASK;                  // t2..t9 のサイズ (プロファイル依存)
     static const int SM = 1 << 24;
     static const int EXE_BITS = 22, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
+    static const int TEXT_BITS = 22, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
     std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST専用)
+    std::vector<uint16_t> tText;                   // Shift-JIS構造・文字クラス文脈 (SLOW専用)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
@@ -86,6 +88,10 @@ struct CMModel {
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
     bool isExe = false, exeActive = false;
     int exeRemain = 0, exeClass = 0, exeOpcode = 0;
+    bool isText = false, sjisTrail = false;
+    int sjisLead = 0, textIdx = 0;
+    uint16_t textPrevChar = 0;
+    uint32_t textClasses = 0;                      // 直近6トークンの4bit文字クラス
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
     int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
     int ms_apm = 0;                                // 8段階 match strength (APM3専用)
@@ -104,10 +110,13 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 t0(512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768), matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768),
+                tText((prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2) ? TEXT_SIZE : 1, 32768),
+                matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         isExe = prof.tbits == 29;
+        isText = prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2;
         uint16_t initv[65];
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 32768; ++i)
@@ -195,6 +204,16 @@ struct CMModel {
             eh = eh * 0x9E3779B1u + static_cast<uint32_t>(buf.size() & 15);
             idx[13] = static_cast<int>(eh & EXE_MASK);
             st[13] = CM_STR.v[tExe[idx[13]] >> 4];
+        }
+        // Shift-JIS text model: byte-order文脈とは別に文字境界と粗い文字種を共有する。
+        st[14] = 0;
+        if (isText) {
+            uint32_t th = static_cast<uint32_t>(c0);
+            th = th * 0x9E3779B1u + textClasses;
+            th = th * 0x9E3779B1u + static_cast<uint32_t>(textPrevChar + 1);
+            th = th * 0x9E3779B1u + static_cast<uint32_t>(sjisTrail ? (0x100 | sjisLead) : 0);
+            textIdx = static_cast<int>(th & TEXT_MASK);
+            st[14] = CM_STR.v[tText[textIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
@@ -303,6 +322,7 @@ struct CMModel {
         upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]);
         upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]); upd(t7, idx[7]); upd(t8, idx[8]); upd(t9, idx[9]);
         if (exeActive) upd(tExe, idx[13]);
+        if (isText) upd(tText, textIdx);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;
@@ -316,6 +336,29 @@ struct CMModel {
                 } else if (B >= 0xB8 && B <= 0xBF) {
                     exeClass = 2; exeOpcode = B; exeRemain = 4;          // MOV reg, imm32
                 }
+            }
+            if (isText) {
+                auto isLead = [](int x) { return (x >= 0x81 && x <= 0x9F) || (x >= 0xE0 && x <= 0xFC); };
+                int cls = 0;
+                if (sjisTrail) {
+                    uint16_t ch = static_cast<uint16_t>((sjisLead << 8) | B);
+                    if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // ひらがな
+                    else if (sjisLead == 0x83) cls = 7;                           // カタカナ
+                    else if (sjisLead == 0x81) cls = 8;                           // 全角記号
+                    else cls = 9;                                                 // 漢字ほか
+                    textPrevChar = ch;
+                    sjisTrail = false; sjisLead = 0;
+                } else if (isLead(B)) {
+                    sjisLead = B; sjisTrail = true;
+                } else {
+                    if (B == '\r' || B == '\n') cls = 1;
+                    else if (B == ' ' || B == '\t') cls = 2;
+                    else if (B >= '0' && B <= '9') cls = 3;
+                    else if ((B >= 'A' && B <= 'Z') || (B >= 'a' && B <= 'z')) cls = 4;
+                    else cls = 5;
+                    textPrevChar = static_cast<uint16_t>(B);
+                }
+                if (cls != 0) textClasses = ((textClasses << 4) | static_cast<uint32_t>(cls)) & 0xFFFFFFu;
             }
             if (matchPtr > 0 && matchPtr < buf.size() - 1 && buf[matchPtr] == B) { ++matchPtr; ++matchLen; }
             else { matchPtr = 0; matchLen = 0; }

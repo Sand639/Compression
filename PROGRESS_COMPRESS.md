@@ -4,7 +4,10 @@
 - 起動時の本物5ファイルは全て期待サイズと一致。
 - 持越しの未完成Shift-JIS文脈は `st[13]` 未初期化かつ `t10` 未使用で、TeraPad.exe 1,252,027 B、
   round-trip FAILとなったため即revert。詳細は LEDGER.md。
-- 正常版へ戻した後、session-start BESTを本物5ファイルで再確定する。
+- 正常版へ戻した後、MSVC `/O2 /std:c++20 /utf-8` の本番トーナメントで
+  **session-start BEST = 1,171,165 B** (`data.arc`) を再確定。
+- 内訳: exe 426,631 / wav 230,887 / txt 227,372 / hal 226,793 / yuuki 59,370 B、
+  payload計1,171,053 B。セルフテストPASS、展開後5/5 SHA-256一致。
 
 ## 第3セッション (2026-06-25, --continue) — WAV大幅改善
 - 第2セッション(autoによる継続, 実機HEAD 1,209,808)の上で再開。STOPファイルは無視指示。

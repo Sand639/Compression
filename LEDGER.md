@@ -2,6 +2,12 @@
 
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 
+### session-start BEST
+- **1,171,165 B** (`data.arc`, payload 1,171,053 B)。MSVC `/O2 /std:c++20 /utf-8`。
+- 内訳: TeraPad.exe 426,631 / explosion.wav 230,887 / wagahaiwa.txt 227,372 /
+  hal.bmp 226,793 / yuuki_256.bmp 59,370 B。
+- セルフテストPASS。本番アーカイブを展開し、5/5ファイルでSHA-256一致。
+
 ### 起動時持越し: 未完成 Shift-JIS 2バイト文脈 → **失敗・revert**
 - 開始時の未コミット差分を `session-start` として保存後、MSVC `/O2 /std:c++20 /utf-8` で検証。
 - `NIN=14` と巨大な `t10` を追加していたが、`predict()` で `st[13]` を設定せず、`update()` でも

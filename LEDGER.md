@@ -1,5 +1,73 @@
 # 改良台帳
 
+## 🆕 未着手の採用候補（ChatGPT案を現状と照合して精査・2026-07-01追加 / 上から優先）
+
+> 現BEST = 1,166,992 B (ARC6)。**全候補は必ず合否ゲートを通すこと**:
+> payload合計 < BEST（厳密に小さい）/ round-trip 5/5 SHA-256一致 / self-test PASS /
+> CMストリーム非互換なら ARC magic 更新。**既存方式は置換せず「トーナメント候補の追加」を原則**とする。
+> 1ファイルだけ改善しても5ファイル合計payloadが悪化したら revert。
+
+### A. WAV_PRIOR を候補分離（LEGACY / PRIOR） ← ✅ **採用済 -265 B (iter6, ARC7)**
+- 何を: 現在 explosion.wav 用の WAV_PRIOR が WAV+CM に固定適用され、同じ WAV+CM を選ぶ
+  yuuki_256.bmp に副作用で **+265 B** 出ている。WAV候補を `ALGO_WAV_CM_LEGACY`(priorなし) /
+  `ALGO_WAV_CM`(priorあり) に分け、トーナメントで小さい方を選ばせる。
+- 結果: yuuki が LEGACY を選び **-265 B 回収**。explosion.wav は PRIOR 付きが最小のまま。詳細は iter6。
+- 実装: `CMProfile.applyPrior` フラグ(既定 true) + `CM_PROF_WAV_LEGACY` + `ALGO_WAV_CM_LEGACY`(0x0F)。
+- 残り(案5): 他の prior(exe/bmp/text)も同様に ON/OFF を候補化すると副作用回避で更に -100〜-500 B。
+  `applyPrior` 設計は流用可能。**未着手**。
+
+### B. exe ModRM/SIB 軽量 x86 状態文脈 ← 最優先（PROGRESS の「次の試み」と一致）
+- 何を: 完全 x86 デコーダ不要。軽量ヒューリスティックで OPCODE/MODRM/SIB/DISP/IMM/REL 状態を推定し、
+  x86_state・opcode_class・modrm(mod/reg/rm)・operand_byte_pos 等を FAST(exe)専用の小型文脈へ追加。
+- 期待: TeraPad.exe 限定で **-100〜-800 B**。
+- 注意: 変換ではなく**確率モデル補助に留める**（Jcc 拡張BCJ の偽陽性失敗 +2,389 とは別物）。
+  表は小さく、失敗時に他4ファイルへ影響しないよう exe 専用にする。
+
+### C. SJIS 2-gram / 文字クラス遷移文脈 ← 高優先（PROGRESS の「次の試み」と一致）
+- 何を: 既存 Shift-JIS 文字クラスモデル(-739 成功)の延長。prev_class→cur_class、prev2+prev、
+  lead/trail phase、句読点後/鉤括弧内/改行直後フラグを SLOW(text)専用の小型文脈へ追加。
+- 期待: wagahaiwa.txt 限定で **-100〜-700 B**。
+- 注意: **生フレーズ置換は禁止**（静的辞書 +4,581 の失敗）。巨大2-gram表を避け、全入力で初期化・更新漏れを出さない。
+
+### D. yuuki_256.bmp 専用インデックス画像 codec ← 中〜高優先（不一致方式の是正）
+- 何を: yuuki は8bitインデックス画像なのに現在 WAV+CM を選んでいる(59,635)。palette別保存 +
+  index map の2D予測(left/up/MED) + 同色ラン長RLE + tile 単位モード選択 の独立候補を追加。
+- 期待: **-100〜-2,000 B**（本来不一致な方式なので伸びしろあり）。
+- 注意: 独立候補として追加し、既存に勝てなければ不採用。現状59KB台なので幅は読みにくい。
+
+### E. ブロック単位トーナメント圧縮器 ← 中優先・新系統で当たれば全ファイルに効く
+- 何を: ファイル単位トーナメントは残し、**追加候補**として 256KiB 前後のブロック単位で
+  既存CM候補 / RAW 等を試し最小を採用。ブロックヘッダに方式ID・サイズを保存。
+- 期待: 合計 **-200〜-2,000 B**（特に exe / bmp）。
+- 注意: ブロックを小さくしすぎると CM の長文脈が切れて悪化する。まず **256KiB 以上**で。
+  ヘッダオーバーヘッドに注意。全体CMより悪化するブロックは使わない。
+
+### F. hal.bmp MED残差の軽量確率文脈 ← 中優先（予測値は変えない）
+- 何を: 予測器は触らず、MED後残差の確率だけを RGB phase / bitpos / 直前残差の符号・大きさbucket /
+  x mod 3 / 行フィルタ mode の小型文脈で補助。
+- 期待: hal.bmp 限定で **-50〜-400 B**。
+- 注意: CALIC 勾配バイアス(+174 失敗)と違い**予測値を変えない**。既存3位相prior(-590済)と重複しない情報に絞る。
+
+### G. text 専用 PPM 独立候補（byte → SJIS文字単位） ← 中優先・新系統
+- 何を: wagahaiwa.txt 専用候補として order0-5 の byte単位 PPM + range coder を追加。
+  余裕があれば SJIS 2バイトを1文字シンボル化した PPM も。既存CMは触らず別候補。
+- 期待: **-100〜-1,500 B**（ただし強い既存CMに負ける可能性も高い）。
+- 注意: 最大order・ノード数に上限。辞書のように入力を壊さない（完全に別候補として実装）。
+
+### H. exe 命令ストリーム分離 codec ← 中優先・高コスト（B が当たってから拡張）
+- 何を: 軽量 x86 パーサで opcode/ModRM/SIB/disp/imm/rel/raw に分離し、各ストリームを個別圧縮
+  (range/PPM)。パース不能箇所は raw へ逃がす。exe は最大ファイルなので上振れが大きい。
+- 期待: TeraPad.exe で **-300〜-3,000 B**。
+- 注意: 完全可逆必須・raw escape 必須。実装コスト高。まず B の軽量文脈で当たりを確認してから着手。
+
+### 低優先（大コスト・既存CMに負ける可能性が高い。上が尽きてから）
+- ROLZ+RangeCoder / LZMA風 Optimal Parse LZ / FLAC・Monkey's風 WAV専用codec /
+  BWT+MTF+RLE 独立候補（※既に BWT パイプラインがあり CM が上回っている）/ 小型PAQ風 別CM。
+- いずれも「独立候補として追加し、勝てなければ不採用」を厳守。実装コストの割に期待薄。
+
+---
+
+
 ## 第5セッション (2026-07-01, known-file specialization)
 
 ### イテレーション1: Shift-JIS静的フレーズ辞書 + CM → **失敗 +4,581 B・revert**
@@ -37,6 +105,36 @@
   yuukiは引き続きWAV+CMが最小(59,635)だが、BMP_PRIOR前の水準(59,370)より若干悪化。
 - CMビットストリーム非互換のためARC5→ARC6へ更新。
 - 本番: **data.arc = 1,166,992 B（1,167,475 → -483 B)**。5/5 SHA-256一致。output.enc更新。
+
+### イテレーション5: テキスト TEXT_PRIOR (order-0 事前確率) → **成功 -20 B**
+- wagahaiwa.txtの生バイト分布から bit-prefix 条件付き確率を学習 (`text_train.cpp`)し、
+  SLOW(text)プロファイルのt0表 (prefix=1..255) を TEXT_PRIOR[256] で初期化。
+- measure: wagahaiwa.txt **226,633 → 226,613 B (-20)**、他不変。
+- **失敗した派生案 TEXT_BIGRAM_PRIOR[256][256] (order-1 bigram) は revert 済**:
+  bigram統計で t1表(prevByte×bit-prefix, 65,536セル)を count=15(飽和)初期化すると学習レートが
+  rate[15]=2849/65536≈4.3%に固定され、希少・ノイジーなセルの初期適応が遅すぎて **+1,022 B 悪化**。
+  cm.cpp から完全除去。生バイト bigram ではなく文字クラス遷移(候補C)なら希釈を避けられる見込み。
+- 下記イテレーション6と同一コミット(ARC7)で本番反映。
+
+### イテレーション6: 候補A WAV_CM を LEGACY/PRIOR に候補分離 → **成功 -265 B**
+- 問題: iter4 の WAV_PRIOR(4位相 order-0 事前確率)は WAV+CM 全体に固定適用され、同じ WAV+CM を
+  選ぶ yuuki_256.bmp(インデックス画像)に副作用で **+265 B** 出ていた(59,370→59,635)。
+- 対策: `CMProfile.applyPrior` フラグを新設(既定 true=不変)。false のとき WAV_PRIOR と 4位相 order-0
+  分割を無効化し **事前確率導入前(legacy)の挙動を再現**。新 algo `ALGO_WAV_CM_LEGACY`(0x0F, prof は
+  `CM_PROF_WAV_LEGACY`) をトーナメント候補に追加。既存 `ALGO_WAV_CM` は prior 付きのまま。
+- 結果: yuuki が LEGACY を選び **59,635 → 59,370 B (-265, 回帰を完全回収)**。explosion.wav は
+  従来通り PRIOR 付き WAV_CM が最小(230,139, 不変)。他3ファイル不変。
+- 新 algo ID 追加でアーカイブ非互換のため magic を **ARC6 → ARC7** へ更新。
+- **本番(iter5+6 合算): data.arc = 1,166,707 B (1,166,992 → -285 B)**。5ファイル round-trip 5/5
+  SHA-256一致、self-test PASS。output.enc 更新。
+  内訳 exe 424,270 / wav 230,139 / txt 226,613 / hal 226,203 / yuuki 59,370 B。
+- 一般化: `applyPrior` は BMP/EXE/TEXT prior にも流用可能な設計。exe/bmp/text の prior ON/OFF 候補化
+  (候補A案5)で更なる副作用回避が狙える。
+
+#### 次のより有望なレバー候補
+- 候補B: TeraPad.exe **ModRM/SIB バイト文脈** (exe は最大の424KB、まだ伸びしろ大)。
+- 候補C: テキスト SJIS **2-gram 文字クラス遷移** (生バイトbigramの希釈を文字クラスで回避)。
+- 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。
 
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 

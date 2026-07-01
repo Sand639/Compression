@@ -1,11 +1,11 @@
 #include "compress.h"
 
 // ==========================================================================
-// コンテキストミキシング (CM) — 二値算術符号化 + 複数文脈モデル + ロジスティック混合
-//   lpaq 系の軽量版。モデル: order-1/2/3 文脈 + マッチモデル。各モデルの予測を
-//   stretch 領域で重み付き加算 (mixer) し squash で最終確率に。1 ビットごとに
-//   実ビットで各重みとモデル確率を更新。エンコード/デコードは同一モデルを駆動し
-//   符号器だけが異なるので完全可逆。出力: [u64 size][二値算術ストリーム]。
+// 繧ｳ繝ｳ繝・く繧ｹ繝医Α繧ｭ繧ｷ繝ｳ繧ｰ (CM) 窶・莠悟､邂苓｡鍋ｬｦ蜿ｷ蛹・+ 隍・焚譁・ц繝｢繝・Ν + 繝ｭ繧ｸ繧ｹ繝・ぅ繝・け豺ｷ蜷・
+//   lpaq 邉ｻ縺ｮ霆ｽ驥冗沿縲ゅΔ繝・Ν: order-1/2/3 譁・ц + 繝槭ャ繝√Δ繝・Ν縲ょ推繝｢繝・Ν縺ｮ莠域ｸｬ繧・
+//   stretch 鬆伜沺縺ｧ驥阪∩莉倥″蜉邂・(mixer) 縺・squash 縺ｧ譛邨ら｢ｺ邇・↓縲・ 繝薙ャ繝医＃縺ｨ縺ｫ
+//   螳溘ン繝・ヨ縺ｧ蜷・㍾縺ｿ縺ｨ繝｢繝・Ν遒ｺ邇・ｒ譖ｴ譁ｰ縲ゅお繝ｳ繧ｳ繝ｼ繝・繝・さ繝ｼ繝峨・蜷御ｸ繝｢繝・Ν繧帝ｧ・虚縺・
+//   隨ｦ蜿ｷ蝎ｨ縺縺代′逡ｰ縺ｪ繧九・縺ｧ螳悟・蜿ｯ騾・ょ・蜉・ [u64 size][莠悟､邂苓｡薙せ繝医Μ繝ｼ繝]縲・
 // ==========================================================================
 static int CM_squash(int d) {
     static const int t[33] = {1,2,3,6,10,16,27,45,73,120,194,310,488,747,1101,1546,2047,
@@ -25,8 +25,8 @@ struct CM_Stretch {
 };
 static const CM_Stretch CM_STR;
 
-// TeraPad.exe のBCJ後ストリームから学習した x86 operand prior。
-// [rel32/imm32 × 残りバイト位置][bit-prefix c0] の P(1), 12bit。
+// TeraPad.exe 縺ｮBCJ蠕後せ繝医Μ繝ｼ繝縺九ｉ蟄ｦ鄙偵＠縺・x86 operand prior縲・
+// [rel32/imm32 ﾃ・谿九ｊ繝舌う繝井ｽ咲ｽｮ][bit-prefix c0] 縺ｮ P(1), 12bit縲・
 static const uint16_t EXE_PRIOR[8][256] = {
  {2048,297,98,1881,36,1615,711,3103,14,2420,2030,2146,355,2460,1621,2558,26,2194,1805,2313,1719,1902,2239,1638,3072,1784,1588,2814,819,2101,3441,1851,8,2207,1236,1141,2873,1468,983,928,2884,2067,1174,2048,3324,1332,3563,2995,1489,367,918,2093,2350,2415,2963,1204,1220,2048,1580,1638,2457,445,1365,3180,6,2255,1322,2523,862,1927,1001,910,780,2560,2574,409,3036,1077,2533,534,2000,567,1496,1236,1101,1293,2299,1868,1170,2658,1077,2925,1462,186,862,2129,3029,591,2920,227,1335,1462,2493,1365,1213,113,2409,2389,1170,1872,2693,1321,737,2952,1293,2155,796,1958,885,1966,1780,963,1011,1280,277,630,918,3602,6,2048,1408,2415,930,2048,2234,2925,264,1365,819,1365,351,1024,1092,1638,1820,819,1077,924,2925,3561,2802,2730,1280,3630,1365,2048,955,3669,2925,1024,712,2792,3630,819,481,1228,1832,963,1484,3150,2578,2520,3465,3351,2816,1972,1489,2457,1365,1077,762,1280,3185,2730,1228,1365,1590,1638,1536,3276,2293,3185,1729,3900,3852,2184,3997,4032,3680,2457,384,768,2867,682,1638,1092,963,1820,2457,2275,2958,2048,1536,2978,1489,1911,744,819,2457,3373,2520,167,2234,1489,1529,3664,1575,1280,2925,1170,1638,1861,546,2048,1260,1706,546,3640,1462,2835,1170,1861,2275,1365,275,3392,712,2234,211,1638,184,1445,890,2925,655,3863},
  {2048,178,83,2467,72,1071,853,3351,87,3204,1853,2193,588,2095,1542,2166,794,288,2032,1759,1259,1960,1762,1861,2312,1153,768,2323,1454,2079,2651,3051,950,2652,227,2621,3040,1323,1411,2099,2973,2420,3396,1631,1966,2586,2829,2315,1790,864,2914,2145,2163,1890,3003,1995,877,1785,1489,1807,2336,1907,1693,3336,573,2193,687,2801,80,1439,2586,1613,1592,1884,910,1675,1765,1869,2006,1749,968,312,1660,1004,930,1749,2968,3116,1365,1638,1638,1638,1592,630,1560,2123,3544,505,3333,642,1792,1832,1489,1024,630,564,1536,1755,2275,3561,1560,614,950,3072,1424,2503,1489,2835,819,2560,2267,1162,552,1191,660,1117,1006,2421,592,673,2711,1438,1740,1925,2299,1436,122,1890,1966,1755,2048,2520,1365,2048,682,3072,731,1536,1137,2978,1170,2867,860,2425,2007,1905,2007,1839,1911,2002,571,2633,3117,1365,890,2048,1198,2633,1592,2730,3208,3822,2867,2730,3072,2503,3018,2048,1792,1861,1638,1755,2048,1117,341,2560,1084,2340,585,1365,2048,1638,546,1215,796,1861,3299,3803,2978,2730,2457,512,1489,1820,3072,1638,2048,3072,2849,1638,3308,1638,2048,2048,3276,3072,819,1365,1024,1365,292,2275,1137,3072,558,2925,2457,1260,1024,1365,1536,1365,1638,2275,1638,1638,240,1638,1755,2978,787,2432,1592,2792,372,3185,777,1117,463,2606,372,2835,465,3549,361,3845},
@@ -43,6 +43,10 @@ static const uint16_t WAV_PRIOR[4][256] = {
  {2048,1935,208,3864,48,3140,900,4037,85,1999,1746,3342,762,2264,2043,4012,260,1089,1756,2123,2112,1756,2531,2954,1056,1372,2291,1955,1997,2141,3042,3804,434,1322,1340,1865,1922,2016,2018,1786,2188,2084,1798,2130,2311,2141,2450,2708,1421,1758,1847,2068,2176,2380,2096,1925,2237,1849,2198,2137,2308,2789,2838,3629,508,1577,1671,1654,1627,1889,1804,1875,2077,2014,2027,1421,2275,2184,2095,2334,2097,2294,1899,2119,1953,1766,2145,2025,2389,2180,2472,2214,2098,2403,2340,2623,1496,1792,1851,1910,2028,1629,1630,1843,2220,2091,2396,1858,1885,1892,1835,2029,2119,2182,2126,1934,1934,1900,1947,2248,2101,2319,2413,2361,2391,2429,2515,3527,463,1765,1811,1920,1789,1803,1889,1905,1832,1814,2158,1812,2112,2392,1811,1954,1813,2104,1792,2114,2284,1847,2205,2106,2006,2081,2048,1796,1984,1650,2048,2542,2148,1984,2665,1996,2348,2079,2223,2075,2374,2080,1735,1820,2497,2457,1917,1958,2397,2299,1457,2384,2409,2147,2143,1906,2003,2524,2012,2279,2040,2053,2232,2635,1405,1857,1793,1934,2038,1916,2128,2032,1578,1875,1952,1846,2116,1945,2340,1602,1785,2048,1917,2674,2048,2486,1877,1843,2137,2082,1820,2378,1696,1868,2299,1755,1828,1911,1890,1937,1856,1780,1836,2205,2048,2048,2288,2429,2142,1943,2081,2435,2075,2229,2143,2377,1892,2427,2381,2136,2319,2298,2209,2286,2253,2324,2299,3565},
  {2048,1849,538,3449,509,1885,2206,3498,646,1777,1894,2012,2044,2157,2319,3404,1144,1490,1909,1939,1933,2026,1921,2056,2067,2018,2131,2132,2173,2162,2460,3016,1529,1612,1696,1838,1897,2040,2026,2050,1989,2005,2121,2020,2125,1989,2048,2028,2011,1969,2008,2176,2019,2029,2147,2071,2119,2092,2104,2201,2235,2371,2501,2626,1826,1803,1809,1826,1829,1927,1985,2016,1938,2026,1992,1979,2042,2117,2068,1893,2043,2091,1966,1977,1992,1993,2038,2038,2114,2094,1984,1994,2011,2071,2041,2148,2002,2088,2171,2010,2022,1947,1947,2009,2017,1990,2079,2048,2068,2053,2084,2058,2030,2085,2034,2081,2136,2012,2176,2248,2057,2151,2215,2185,2240,2316,2287,2396,1997,1877,1910,1891,1937,1836,1931,1946,2004,1921,1869,1979,2025,1950,2050,1883,2039,1886,1989,1971,2075,2055,2024,2069,2143,2099,1993,2036,2188,2056,2234,2009,2014,2292,2016,2181,1939,2199,2064,2117,2023,1933,2031,1823,2191,1969,1943,2072,2067,2060,1910,2122,1873,1910,2075,2098,1864,1864,2122,2034,1949,1949,2223,2105,1971,2101,2061,1941,2275,2172,2094,1978,2073,1944,2028,2194,2061,2078,1923,2009,1914,2010,2078,2158,2105,1941,1972,2065,2107,1948,2176,2272,2074,2104,2053,2185,2226,2224,2152,1947,2112,2008,1984,2249,1933,2026,2086,2168,2074,1937,2071,2187,2081,2061,1980,2097,2097,2158,2235,2131,2152,2178,2137,2162,2170,2155,2237,2214},
  {2048,1842,1,4094,1,2048,2420,4094,3,1675,1890,2205,2048,2340,2457,4091,12,1039,2048,2048,1536,1755,1170,1536,2730,2048,1755,1820,3185,2205,3192,4081,21,1315,1686,1137,2048,2048,1365,1365,2048,2048,2457,3072,3413,1365,2730,3072,1365,1638,2048,1024,2457,2048,1365,2457,2730,2048,1755,2048,2560,2654,3034,4067,45,1355,1560,1228,1981,1675,2340,682,2457,1638,819,1638,3276,1365,1638,2730,1024,3072,2730,1365,2730,2048,2048,2048,2048,2048,2730,2048,1365,1638,2048,2048,1365,2048,1024,1365,1365,1365,2048,2048,1365,1024,2730,2730,1638,1365,1365,1024,2048,2730,1638,2457,2457,3072,3276,2457,2340,2606,3072,2048,2880,2489,2432,4048,128,1126,1905,2090,1872,1638,2371,1966,1927,1536,877,819,2925,1820,1365,2048,2730,2048,2048,2730,1638,2048,2048,2730,2048,1638,1365,2048,2048,1365,2048,1365,3072,2048,2048,2048,2048,1365,2730,2048,2048,1365,1365,1365,2048,2048,1365,2730,2048,2048,2048,1024,2048,2730,2048,2048,2730,2048,1024,1365,2048,2048,2730,2730,1365,2048,2048,2048,3072,2048,1365,2048,2730,2048,1365,2048,1365,1365,2048,2048,2730,2048,2048,2048,2048,1365,2048,1365,1024,2730,2730,2048,1365,2048,2048,2048,2048,2048,2048,2730,2048,1365,1365,3072,1365,1024,2048,2048,2048,2457,2730,2048,1024,2457,1638,2560,2048,3072,2155,1293,2048,2137,2560,2472,2448,2107,2984,3942}
+};
+
+static const uint16_t TEXT_PRIOR[256] = {
+ 2048,3631,3841,1026,415,2361,903,1693,1,2192,1203,3001,615,1803,706,1066,4095,2048,3247,892,928,2626,2860,380,669,373,2127,2007,2231,2458,1866,662,2048,2048,2048,2048,386,3993,1551,192,293,2859,1837,2903,1540,3460,2530,1114,33,2457,2006,2223,1529,1155,2651,2830,3010,2160,2542,3106,2206,495,263,1268,2048,2048,4094,1,2048,2048,2048,2048,83,3413,682,313,2163,1694,198,1024,2087,1652,1568,3218,3010,2122,1996,1266,3044,2187,1941,1573,3630,1129,1839,1413,3419,2602,2004,2277,1906,2191,1218,2404,2841,1164,1868,1376,1938,1831,2427,1787,1068,1697,554,396,2076,2241,1795,1302,1146,2796,1383,880,260,2090,3149,4,2048,2048,2048,2048,2048,1,4094,2048,2048,2048,2048,2048,2048,2048,2048,2048,83,2048,2048,1365,2048,2048,4073,1792,3493,2101,1339,2103,1638,1024,3072,2048,3559,503,2205,2036,1836,2362,1250,1422,2649,2306,1152,1017,926,2351,2280,2760,1555,2215,2233,2602,2269,1701,1121,2375,2710,4023,1136,397,2576,2396,1721,13,4068,72,2269,1939,2454,2053,1518,1484,1585,2279,2343,1680,888,1474,2567,1090,619,78,131,694,3430,1082,3501,3000,3371,3049,3752,2724,2466,2983,3697,1228,3569,708,1734,701,1932,2001,1495,900,2236,2455,536,1466,2451,1514,718,2570,1160,1836,2906,2693,2827,1043,3299,2868,2057,2535,1672,1489,1955,2412,4,2048
 };
 
 static const uint16_t BMP_PRIOR[3][256] = {
@@ -78,59 +82,60 @@ struct BinaryRangeDecoder {
     }
 };
 
-// 適応カウンタの学習レート (16.16 固定小数, 1/(n+α)相当)。ファイル種別ごとにプロファイルを選ぶ:
-//   SLOW = 低い床(~1/16): 定常的なテキスト/画像向け (CM, BMP_CM)。
-//   FAST = 高い床(~1/5):  非定常な exe/音声残差向け (BCJ_CM, WAV_CM)。
-// algo バイトはアーカイブに保存され復号も同じ algo を見るため、プロファイル選択は完全可逆。
+// 驕ｩ蠢懊き繧ｦ繝ｳ繧ｿ縺ｮ蟄ｦ鄙偵Ξ繝ｼ繝・(16.16 蝗ｺ螳壼ｰ乗焚, 1/(n+ﾎｱ)逶ｸ蠖・縲ゅヵ繧｡繧､繝ｫ遞ｮ蛻･縺斐→縺ｫ繝励Ο繝輔ぃ繧､繝ｫ繧帝∈縺ｶ:
+//   SLOW = 菴弱＞蠎・~1/16): 螳壼ｸｸ逧・↑繝・く繧ｹ繝・逕ｻ蜒丞髄縺・(CM, BMP_CM)縲・
+//   FAST = 鬮倥＞蠎・~1/5):  髱槫ｮ壼ｸｸ縺ｪ exe/髻ｳ螢ｰ谿句ｷｮ蜷代￠ (BCJ_CM, WAV_CM)縲・
+// algo 繝舌う繝医・繧｢繝ｼ繧ｫ繧､繝悶↓菫晏ｭ倥＆繧悟ｾｩ蜿ｷ繧ょ酔縺・algo 繧定ｦ九ｋ縺溘ａ縲√・繝ｭ繝輔ぃ繧､繝ｫ驕ｸ謚槭・螳悟・蜿ｯ騾・・
 
-// CM 予測モデル (encode/decode 共通)
-//   文脈モデル: order 0,1,2,3,4,5,6 + マッチ = 8 入力。mixer + APM(二次推定)。
-//   各テーブル要素 uint16 = (prob<<4)|count : prob は 12bit, count(0..15) で学習率を制御。
+// CM 莠域ｸｬ繝｢繝・Ν (encode/decode 蜈ｱ騾・
+//   譁・ц繝｢繝・Ν: order 0,1,2,3,4,5,6 + 繝槭ャ繝・= 8 蜈･蜉帙Ｎixer + APM(莠梧ｬ｡謗ｨ螳・縲・
+//   蜷・ユ繝ｼ繝悶Ν隕∫ｴ uint16 = (prob<<4)|count : prob 縺ｯ 12bit, count(0..15) 縺ｧ蟄ｦ鄙堤紫繧貞宛蠕｡縲・
 struct CMModel {
     static const int NIN = 15;                     // o0..o8,stride3,match x3,x86 operand,SJIS text
-    const int TBITS, TSIZE, TMASK;                  // t2..t9 のサイズ (プロファイル依存)
+    const int TBITS, TSIZE, TMASK;                  // t2..t9 縺ｮ繧ｵ繧､繧ｺ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
     static const int SM = 1 << 24;
     static const int EXE_BITS = 22, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
     static const int TEXT_BITS = 22, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;
-    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // ビット確率 (12bit, 初期 2048)
-    std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST専用)
-    std::vector<uint16_t> tText;                   // Shift-JIS構造・文字クラス文脈 (SLOW専用)
+    std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
+    std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST蟆ら畑)
+    std::vector<uint16_t> tText;                   // Shift-JIS讒矩繝ｻ譁・ｭ励け繝ｩ繧ｹ譁・ц (SLOW蟆ら畑)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
-    std::vector<int> w;                            // mixer 重み (mixCtx 文脈 x NIN)
-    std::vector<int> w2;                           // 第2 mixer 重み (order-2 文脈 x NIN)
-    std::vector<int> w3;                           // 第3 mixer 重み (order-3 文脈 x NIN)
-    std::vector<int> w4;                           // 第4 mixer 重み (order-4 文脈 x NIN)
-    std::vector<int> wf;                           // 最終 mixer (sub-mixer をbitpos毎に学習合成)
+    std::vector<int> w;                            // mixer 驥阪∩ (mixCtx 譁・ц x NIN)
+    std::vector<int> w2;                           // 隨ｬ2 mixer 驥阪∩ (order-2 譁・ц x NIN)
+    std::vector<int> w3;                           // 隨ｬ3 mixer 驥阪∩ (order-3 譁・ц x NIN)
+    std::vector<int> w4;                           // 隨ｬ4 mixer 驥阪∩ (order-4 譁・ц x NIN)
+    std::vector<int> wf;                           // 譛邨・mixer (sub-mixer 繧鍛itpos豈弱↓蟄ｦ鄙貞粋謌・
     static const int NMIX = 4;
     int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0};
-    std::vector<uint16_t> apm;                     // 一次推定 (8192 文脈 x 65 点、match強度付き)
-    std::vector<uint16_t> apm2;                    // 二次推定 (2048 文脈 x 65 点、bitpos付き)
-    std::vector<uint16_t> apm3;                    // 三次推定 (1024 文脈 x 65 点、c0×match強度)
-    std::vector<uint16_t> apm4;                    // 四次推定 (2048 文脈 x 65 点、cx[3]ハッシュ+bitpos)
+    std::vector<uint16_t> apm;                     // 荳谺｡謗ｨ螳・(8192 譁・ц x 65 轤ｹ縲［atch蠑ｷ蠎ｦ莉倥″)
+    std::vector<uint16_t> apm2;                    // 莠梧ｬ｡謗ｨ螳・(2048 譁・ц x 65 轤ｹ縲｜itpos莉倥″)
+    std::vector<uint16_t> apm3;                    // 荳画ｬ｡謗ｨ螳・(1024 譁・ц x 65 轤ｹ縲…0ﾃ洋atch蠑ｷ蠎ｦ)
+    std::vector<uint16_t> apm4;                    // 蝗帶ｬ｡謗ｨ螳・(2048 譁・ц x 65 轤ｹ縲…x[3]繝上ャ繧ｷ繝･+bitpos)
     uint32_t matchPtr = 0; int matchLen = 0;
-    uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 第2マッチモデル (6バイトハッシュ)
-    uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 第3マッチモデル (8バイトハッシュ)
-    uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 直近 k バイトのハッシュ
+    uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 隨ｬ2繝槭ャ繝√Δ繝・Ν (6繝舌う繝医ワ繝・す繝･)
+    uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 隨ｬ3繝槭ャ繝√Δ繝・Ν (8繝舌う繝医ワ繝・す繝･)
+    uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 逶ｴ霑・k 繝舌う繝医・繝上ャ繧ｷ繝･
     bool isExe = false, isBmp = false, isWav = false, exeActive = false;
+    bool applyPrior = true;                          // false: legacy(prior/位相なし)
     int exeRemain = 0, exeClass = 0, exeOpcode = 0;
     bool isText = false, sjisTrail = false;
     int sjisLead = 0, textIdx = 0;
     uint16_t textPrevChar = 0;
-    uint32_t textClasses = 0;                      // 直近6トークンの4bit文字クラス
-    int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1用)
-    int mixCtx = 0;                                // ミキサー文脈 = mc_ext*2 + match-active
-    int ms_apm = 0;                                // 8段階 match strength (APM3専用)
-    int ms_apm16 = 0;                              // 16段階 match strength (APM1専用)
+    uint32_t textClasses = 0;                      // 逶ｴ霑・繝医・繧ｯ繝ｳ縺ｮ4bit譁・ｭ励け繝ｩ繧ｹ
+    int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1逕ｨ)
+    int mixCtx = 0;                                // 繝溘く繧ｵ繝ｼ譁・ц = mc_ext*2 + match-active
+    int ms_apm = 0;                                // 8谿ｵ髫・match strength (APM3蟆ら畑)
+    int ms_apm16 = 0;                              // 16谿ｵ髫・match strength (APM1蟆ら畑)
     int st[NIN], idx[NIN], pr0 = 2048, prf = 2048, apmIdx = 0;
     int apm2Ctx = 0, apm2Idx = 0, apm2Wt = 0;
     int apm3Idx = 0, apm3Wt = 0;
     int apm4Ctx = 0, apm4Idx = 0, apm4Wt = 0;
-    const int* rate = CM_RATE_SLOW;                // 適応カウンタ学習レートのプロファイル
-    int mixShift = 12;                             // ミキサー学習レート (プロファイル依存)
-    int apmShift = 7;                              // APM 更新レート (プロファイル依存)
-    int subShift = 24;                             // sub-mixer 文脈の細かさ (プロファイル依存)
-    int strideLen = 3;                             // スパース文脈の刻み (プロファイル依存)
+    const int* rate = CM_RATE_SLOW;                // 驕ｩ蠢懊き繧ｦ繝ｳ繧ｿ蟄ｦ鄙偵Ξ繝ｼ繝医・繝励Ο繝輔ぃ繧､繝ｫ
+    int mixShift = 12;                             // 繝溘く繧ｵ繝ｼ蟄ｦ鄙偵Ξ繝ｼ繝・(繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
+    int apmShift = 7;                              // APM 譖ｴ譁ｰ繝ｬ繝ｼ繝・(繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
+    int subShift = 24;                             // sub-mixer 譁・ц縺ｮ邏ｰ縺九＆ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
+    int strideLen = 3;                             // 繧ｹ繝代・繧ｹ譁・ц縺ｮ蛻ｻ縺ｿ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
 
     CMModel(const CMProfile& prof)
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
@@ -141,6 +146,7 @@ struct CMModel {
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
+        applyPrior = prof.applyPrior;
         isExe = prof.tbits == 29;
         isBmp = prof.tbits == 27 && prof.mixShift == 12 && prof.apmShift == 8 && prof.strideLen == 3;
         isWav = prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 7 && prof.strideLen == 4;
@@ -150,13 +156,17 @@ struct CMModel {
                 for (int prefix = 1; prefix < 256; ++prefix)
                     t0[phase * 512 + prefix] = static_cast<uint16_t>((BMP_PRIOR[phase][prefix] << 4) | 15);
         }
-        if (isWav) {
+        if (isWav && applyPrior) {
             for (int phase = 0; phase < 4; ++phase)
                 for (int prefix = 1; prefix < 256; ++prefix)
                     t0[phase * 512 + prefix] = static_cast<uint16_t>((WAV_PRIOR[phase][prefix] << 4) | 15);
         }
+        if (isText) {
+            for (int prefix = 1; prefix < 256; ++prefix)
+                t0[prefix] = static_cast<uint16_t>((TEXT_PRIOR[prefix] << 4) | 15);
+        }
         if (isExe) {
-            // coarse priorを、既存のopcode/position/hash表へ展開する。局所学習は通常どおり継続。
+            // coarse prior繧偵∵里蟄倥・opcode/position/hash陦ｨ縺ｸ螻暮幕縺吶ｋ縲ょｱ謇蟄ｦ鄙偵・騾壼ｸｸ縺ｩ縺翫ｊ邯咏ｶ壹・
             for (int cls = 1; cls <= 2; ++cls) {
                 int opFirst = cls == 1 ? 0xE8 : 0xB8;
                 int opLast  = cls == 1 ? 0xE9 : 0xBF;
@@ -191,7 +201,7 @@ struct CMModel {
     }
 
     int predict() {
-        idx[0] = (isBmp ? static_cast<int>(buf.size() % 3) * 512 : isWav ? static_cast<int>(buf.size() % 4) * 512 : 0) + c0; // order0 (BMP/WAVは位相別)
+        idx[0] = (isBmp ? static_cast<int>(buf.size() % 3) * 512 : (isWav && applyPrior) ? static_cast<int>(buf.size() % 4) * 512 : 0) + c0; // order0 (BMP/WAV縺ｯ菴咲嶌蛻･, legacy WAV縺ｯ蜊倅ｽ咲嶌)
         idx[1] = static_cast<int>((cx[1] & 0xFF) * 512 + c0);             // order1
         idx[2] = static_cast<int>(((cx[2] * 0x9E3779B1u) + c0) & TMASK);  // order2
         idx[3] = static_cast<int>(((cx[3] * 0x9E3779B1u) + c0) & TMASK);  // order3
@@ -200,7 +210,7 @@ struct CMModel {
         idx[6] = static_cast<int>(((cx[6] * 0x9E3779B1u) + c0) & TMASK);  // order6
         idx[7] = static_cast<int>(((cx[7] * 0x9E3779B1u) + c0) & TMASK);  // order7
         idx[8] = static_cast<int>(((cx[8] * 0x9E3779B1u) + c0) & TMASK);  // order8
-        // スパース文脈: -s, -2s, -3s バイト (s=strideLen; txt=3 UTF-8整列, exe=4 dword整列)
+        // 繧ｹ繝代・繧ｹ譁・ц: -s, -2s, -3s 繝舌う繝・(s=strideLen; txt=3 UTF-8謨ｴ蛻・ exe=4 dword謨ｴ蛻・
         {
             size_t p = buf.size();
             int s = strideLen;
@@ -231,7 +241,7 @@ struct CMModel {
                 st[10] = predBit ? conf : -conf;
             }
         }
-        st[11] = 0;                                 // 第2マッチモデル (6バイトハッシュ)
+        st[11] = 0;                                 // 隨ｬ2繝槭ャ繝√Δ繝・Ν (6繝舌う繝医ワ繝・す繝･)
         if (matchPtr2 > 0 && matchPtr2 < buf.size()) {
             int predByte = buf[matchPtr2];
             int bitsSoFar = c0 - (1 << bitpos);
@@ -242,7 +252,7 @@ struct CMModel {
                 st[11] = predBit ? conf : -conf;
             }
         }
-        st[12] = 0;                                 // 第3マッチモデル (8バイトハッシュ)
+        st[12] = 0;                                 // 隨ｬ3繝槭ャ繝√Δ繝・Ν (8繝舌う繝医ワ繝・す繝･)
         if (matchPtr3 > 0 && matchPtr3 < buf.size()) {
             int predByte = buf[matchPtr3];
             int bitsSoFar = c0 - (1 << bitpos);
@@ -253,8 +263,8 @@ struct CMModel {
                 st[12] = predBit ? conf : -conf;
             }
         }
-        // x86 operand model: opcode と immediate/relative operand 内のバイト位置を共有文脈化。
-        // BCJ後のrel32は各バイト位置で分布が大きく異なるため、通常のbyte-order文脈と分離する。
+        // x86 operand model: opcode 縺ｨ immediate/relative operand 蜀・・繝舌う繝井ｽ咲ｽｮ繧貞・譛画枚閼亥喧縲・
+        // BCJ蠕後・rel32縺ｯ蜷・ヰ繧､繝井ｽ咲ｽｮ縺ｧ蛻・ｸ・′螟ｧ縺阪￥逡ｰ縺ｪ繧九◆繧√・壼ｸｸ縺ｮbyte-order譁・ц縺ｨ蛻・屬縺吶ｋ縲・
         st[13] = 0;
         exeActive = isExe && exeRemain > 0;
         if (exeActive) {
@@ -265,7 +275,7 @@ struct CMModel {
             idx[13] = static_cast<int>(eh & EXE_MASK);
             st[13] = CM_STR.v[tExe[idx[13]] >> 4];
         }
-        // Shift-JIS text model: byte-order文脈とは別に文字境界と粗い文字種を共有する。
+        // Shift-JIS text model: byte-order譁・ц縺ｨ縺ｯ蛻･縺ｫ譁・ｭ怜｢・阜縺ｨ邊励＞譁・ｭ礼ｨｮ繧貞・譛峨☆繧九・
         st[14] = 0;
         if (isText) {
             uint32_t th = static_cast<uint32_t>(c0);
@@ -278,12 +288,12 @@ struct CMModel {
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
         int ms = matchLen == 0 ? 0 : (matchLen < 8 ? 1 : (matchLen < 32 ? 2 : 3));
-        ms_apm = matchLen == 0 ? 0 : (matchLen < 4 ? 1 : (matchLen < 8 ? 2 : (matchLen < 16 ? 3 : (matchLen < 32 ? 4 : (matchLen < 64 ? 5 : (matchLen < 128 ? 6 : 7))))));  // 8段階 (APM3用)
-        ms_apm16 = matchLen == 0 ? 0 : (matchLen < 2 ? 1 : (matchLen < 3 ? 2 : (matchLen < 4 ? 3 : (matchLen < 6 ? 4 : (matchLen < 8 ? 5 : (matchLen < 12 ? 6 : (matchLen < 16 ? 7 : (matchLen < 24 ? 8 : (matchLen < 32 ? 9 : (matchLen < 48 ? 10 : (matchLen < 64 ? 11 : (matchLen < 96 ? 12 : (matchLen < 128 ? 13 : (matchLen < 192 ? 14 : 15))))))))))))));  // 16段階 (APM1用)
-        mixCtx = mc_ext * 4 + ms;                       // match 強度 (2bit) で別重み集合
-        mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-2 文脈
-        mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-3 文脈
-        mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-4 文脈
+        ms_apm = matchLen == 0 ? 0 : (matchLen < 4 ? 1 : (matchLen < 8 ? 2 : (matchLen < 16 ? 3 : (matchLen < 32 ? 4 : (matchLen < 64 ? 5 : (matchLen < 128 ? 6 : 7))))));  // 8谿ｵ髫・(APM3逕ｨ)
+        ms_apm16 = matchLen == 0 ? 0 : (matchLen < 2 ? 1 : (matchLen < 3 ? 2 : (matchLen < 4 ? 3 : (matchLen < 6 ? 4 : (matchLen < 8 ? 5 : (matchLen < 12 ? 6 : (matchLen < 16 ? 7 : (matchLen < 24 ? 8 : (matchLen < 32 ? 9 : (matchLen < 48 ? 10 : (matchLen < 64 ? 11 : (matchLen < 96 ? 12 : (matchLen < 128 ? 13 : (matchLen < 192 ? 14 : 15))))))))))))));  // 16谿ｵ髫・(APM1逕ｨ)
+        mixCtx = mc_ext * 4 + ms;                       // match 蠑ｷ蠎ｦ (2bit) 縺ｧ蛻･驥阪∩髮・粋
+        mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-2 譁・ц
+        mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-3 譁・ц
+        mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-4 譁・ц
         long long dot = 0, dot2 = 0, dot3 = 0, dot4 = 0;
         for (int i = 0; i < NIN; ++i) {
             dot  += static_cast<long long>(w [mixCtx  * NIN + i]) * st[i];
@@ -291,42 +301,42 @@ struct CMModel {
             dot3 += static_cast<long long>(w3[mix3Ctx * NIN + i]) * st[i];
             dot4 += static_cast<long long>(w4[mix4Ctx * NIN + i]) * st[i];
         }
-        // sub-mixer 出力を最終 mixer が bitpos 毎に学習合成 (2層 mixer)
+        // sub-mixer 蜃ｺ蜉帙ｒ譛邨・mixer 縺・bitpos 豈弱↓蟄ｦ鄙貞粋謌・(2螻､ mixer)
         fmLogit[0] = static_cast<int>(dot >> 16);
         fmLogit[1] = static_cast<int>(dot2 >> 16);
         fmLogit[2] = static_cast<int>(dot3 >> 16);
         fmLogit[3] = static_cast<int>(dot4 >> 16);
-        fmCtx = bitpos * 8 + ms_apm;                    // bitpos + match強度8段階 で sub-mixer 配分を変える
+        fmCtx = bitpos * 8 + ms_apm;                    // bitpos + match蠑ｷ蠎ｦ8谿ｵ髫・縺ｧ sub-mixer 驟榊・繧貞､峨∴繧・
         long long dotF = 0;
         for (int k = 0; k < NMIX; ++k) dotF += static_cast<long long>(wf[fmCtx * NMIX + k]) * fmLogit[k];
         pr0 = CM_squash(static_cast<int>(dotF >> 16));
         if (pr0 < 1) pr0 = 1; else if (pr0 > 4094) pr0 = 4094;
-        // APM1: mixer 出力を文脈 (直前バイト*8+ビット位置+match強度8段階) で補正 (65点補間)
+        // APM1: mixer 蜃ｺ蜉帙ｒ譁・ц (逶ｴ蜑阪ヰ繧､繝・8+繝薙ャ繝井ｽ咲ｽｮ+match蠑ｷ蠎ｦ8谿ｵ髫・ 縺ｧ陬懈ｭ｣ (65轤ｹ陬憺俣)
         int s = CM_STR.v[pr0] + 2048;               // 0..4095
         int wt = s & 63, j = s >> 6;
-        apmIdx = (mc_ext * 16 + ms_apm16) * 65 + j;  // 32768文脈 (mc_ext=2048, ms_apm16=16)
+        apmIdx = (mc_ext * 16 + ms_apm16) * 65 + j;  // 32768譁・ц (mc_ext=2048, ms_apm16=16)
         int ap = (apm[apmIdx] * (64 - wt) + apm[apmIdx + 1] * wt) >> 10;    // 12bit
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
-        // APM2: prf を 2次文脈 (cx[2]のハッシュ上位9bit+bitpos) でさらに補正 (65点補間)
-        apm2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 23) * 8 + bitpos);  // 4096文脈 (9bit+3bit)
+        // APM2: prf 繧・2谺｡譁・ц (cx[2]縺ｮ繝上ャ繧ｷ繝･荳贋ｽ・bit+bitpos) 縺ｧ縺輔ｉ縺ｫ陬懈ｭ｣ (65轤ｹ陬憺俣)
+        apm2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 23) * 8 + bitpos);  // 4096譁・ц (9bit+3bit)
         int s2 = CM_STR.v[prf] + 2048;
         apm2Wt = s2 & 63; int j2 = s2 >> 6;
         apm2Idx = apm2Ctx * 65 + j2;
         int ap2 = (apm2[apm2Idx] * (64 - apm2Wt) + apm2[apm2Idx + 1] * apm2Wt) >> 10;
         prf = (prf + ap2) >> 1;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
-        // APM3: prf を c0 (バイト内部分ビット列) でさらに補正 (65点補間)
+        // APM3: prf 繧・c0 (繝舌う繝亥・驛ｨ蛻・ン繝・ヨ蛻・ 縺ｧ縺輔ｉ縺ｫ陬懈ｭ｣ (65轤ｹ陬憺俣)
         {
             int s3 = CM_STR.v[prf] + 2048;
             apm3Wt = s3 & 63; int j3 = s3 >> 6;
-            apm3Idx = (((mc >> 5) & 7) * 2048 + c0 * 8 + ms_apm) * 65 + j3;  // prev3bits*2048+c0*8+ms_apm → 16384文脈
+            apm3Idx = (((mc >> 5) & 7) * 2048 + c0 * 8 + ms_apm) * 65 + j3;  // prev3bits*2048+c0*8+ms_apm 竊・16384譁・ц
             int ap3 = (apm3[apm3Idx] * (64 - apm3Wt) + apm3[apm3Idx + 1] * apm3Wt) >> 10;
             prf = (prf + ap3) >> 1;
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         }
-        // APM4: prf を cx[4]ハッシュ上位15bit+match有無+bitpos でさらに補正 (65点補間)
-        apm4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 17) * 16 + (matchLen > 0 ? 8 : 0) + bitpos);  // 524288文脈
+        // APM4: prf 繧・cx[4]繝上ャ繧ｷ繝･荳贋ｽ・5bit+match譛臥┌+bitpos 縺ｧ縺輔ｉ縺ｫ陬懈ｭ｣ (65轤ｹ陬憺俣)
+        apm4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 17) * 16 + (matchLen > 0 ? 8 : 0) + bitpos);  // 524288譁・ц
         {
             int s4 = CM_STR.v[prf] + 2048;
             apm4Wt = s4 & 63; int j4 = s4 >> 6;
@@ -338,7 +348,7 @@ struct CMModel {
         return prf;
     }
     void update(int bit) {
-        int err = (bit << 12) - pr0;                // 両 mixer は最終出力誤差で学習
+        int err = (bit << 12) - pr0;                // 荳｡ mixer 縺ｯ譛邨ょ・蜉幄ｪ､蟾ｮ縺ｧ蟄ｦ鄙・
         for (int i = 0; i < NIN; ++i) {
             int& wi = w[mixCtx * NIN + i];
             wi += (st[i] * err) >> mixShift;
@@ -353,21 +363,21 @@ struct CMModel {
             wi4 += (st[i] * err) >> mixShift;
             if (wi4 < -(1 << 20)) wi4 = -(1 << 20); else if (wi4 > (1 << 20)) wi4 = (1 << 20);
         }
-        for (int k = 0; k < NMIX; ++k) {            // 最終 mixer 更新
+        for (int k = 0; k < NMIX; ++k) {            // 譛邨・mixer 譖ｴ譁ｰ
             int& wfk = wf[fmCtx * NMIX + k];
             wfk += (fmLogit[k] * err) >> 14;
             if (wfk < -(1 << 18)) wfk = -(1 << 18); else if (wfk > (1 << 18)) wfk = (1 << 18);
         }
-        int g = bit << 16;                          // APM1 更新
+        int g = bit << 16;                          // APM1 譖ｴ譁ｰ
         apm[apmIdx]     = static_cast<uint16_t>(apm[apmIdx]     + ((g - apm[apmIdx])     >> apmShift));
         apm[apmIdx + 1] = static_cast<uint16_t>(apm[apmIdx + 1] + ((g - apm[apmIdx + 1]) >> apmShift));
-        // APM2 更新
+        // APM2 譖ｴ譁ｰ
         apm2[apm2Idx]     = static_cast<uint16_t>(apm2[apm2Idx]     + ((g - apm2[apm2Idx])     >> apmShift));
         apm2[apm2Idx + 1] = static_cast<uint16_t>(apm2[apm2Idx + 1] + ((g - apm2[apm2Idx + 1]) >> apmShift));
-        // APM3 更新
+        // APM3 譖ｴ譁ｰ
         apm3[apm3Idx]     = static_cast<uint16_t>(apm3[apm3Idx]     + ((g - apm3[apm3Idx])     >> apmShift));
         apm3[apm3Idx + 1] = static_cast<uint16_t>(apm3[apm3Idx + 1] + ((g - apm3[apm3Idx + 1]) >> apmShift));
-        // APM4 更新
+        // APM4 譖ｴ譁ｰ
         apm4[apm4Idx]     = static_cast<uint16_t>(apm4[apm4Idx]     + ((g - apm4[apm4Idx])     >> apmShift));
         apm4[apm4Idx + 1] = static_cast<uint16_t>(apm4[apm4Idx + 1] + ((g - apm4[apm4Idx + 1]) >> apmShift));
         int tgt = bit << 12;
@@ -392,7 +402,7 @@ struct CMModel {
                     --exeRemain;
                     if (exeRemain == 0) { exeClass = 0; exeOpcode = 0; }
                 } else if (B == 0xE8 || B == 0xE9) {
-                    exeClass = 1; exeOpcode = B; exeRemain = 4;          // CALL/JMP rel32 (BCJ対象)
+                    exeClass = 1; exeOpcode = B; exeRemain = 4;          // CALL/JMP rel32 (BCJ蟇ｾ雎｡)
                 } else if (B >= 0xB8 && B <= 0xBF) {
                     exeClass = 2; exeOpcode = B; exeRemain = 4;          // MOV reg, imm32
                 }
@@ -402,10 +412,10 @@ struct CMModel {
                 int cls = 0;
                 if (sjisTrail) {
                     uint16_t ch = static_cast<uint16_t>((sjisLead << 8) | B);
-                    if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // ひらがな
-                    else if (sjisLead == 0x83) cls = 7;                           // カタカナ
-                    else if (sjisLead == 0x81) cls = 8;                           // 全角記号
-                    else cls = 9;                                                 // 漢字ほか
+                    if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // 縺ｲ繧峨′縺ｪ
+                    else if (sjisLead == 0x83) cls = 7;                           // 繧ｫ繧ｿ繧ｫ繝・
+                    else if (sjisLead == 0x81) cls = 8;                           // 蜈ｨ隗定ｨ伜捷
+                    else cls = 9;                                                 // 貍｢蟄励⊇縺・
                     textPrevChar = ch;
                     sjisTrail = false; sjisLead = 0;
                 } else if (isLead(B)) {
@@ -427,7 +437,7 @@ struct CMModel {
             if (matchPtr3 > 0 && matchPtr3 < buf.size() - 1 && buf[matchPtr3] == B) { ++matchPtr3; ++matchLen3; }
             else { matchPtr3 = 0; matchLen3 = 0; }
             size_t p = buf.size();
-            uint32_t hsh = 0;                        // cx[k] = 直近 k バイトの累積ハッシュ
+            uint32_t hsh = 0;                        // cx[k] = 逶ｴ霑・k 繝舌う繝医・邏ｯ遨阪ワ繝・す繝･
             for (int k = 1; k <= 8; ++k) { if (p >= static_cast<size_t>(k)) hsh = hsh * 0x9E3779B1u + buf[p - k] + 1u; cx[k] = hsh; }
             if (p >= 4) {
                 uint32_t hh = (static_cast<uint32_t>(buf[p - 1]) | (static_cast<uint32_t>(buf[p - 2]) << 8)
@@ -436,14 +446,14 @@ struct CMModel {
                 if (matchPtr == 0) { uint32_t cand = matchTab[hh]; if (cand > 0 && cand < p) { matchPtr = cand; matchLen = 1; } }
                 matchTab[hh] = static_cast<uint32_t>(p);
             }
-            if (p >= 6) {                            // 第2マッチ: 直近6バイトハッシュ
+            if (p >= 6) {                            // 隨ｬ2繝槭ャ繝・ 逶ｴ霑・繝舌う繝医ワ繝・す繝･
                 uint32_t h2 = 0;
                 for (int k = 1; k <= 6; ++k) h2 = h2 * 0x9E3779B1u + buf[p - k] + 1u;
                 h2 = (h2 * 2654435761u) & (SM - 1);
                 if (matchPtr2 == 0) { uint32_t cand = matchTab2[h2]; if (cand > 0 && cand < p) { matchPtr2 = cand; matchLen2 = 1; } }
                 matchTab2[h2] = static_cast<uint32_t>(p);
             }
-            if (p >= 8) {                            // 第3マッチ: 直近8バイトハッシュ
+            if (p >= 8) {                            // 隨ｬ3繝槭ャ繝・ 逶ｴ霑・繝舌う繝医ワ繝・す繝･
                 uint32_t h3 = 0;
                 for (int k = 1; k <= 8; ++k) h3 = h3 * 0x9E3779B1u + buf[p - k] + 1u;
                 h3 = (h3 * 2654435761u) & (SM - 1);

@@ -90,6 +90,7 @@ static const uint8_t ALGO_BCJ_CM = 0x0B;   // BCJ(x86) -> CM (.exe 向け)
 static const uint8_t ALGO_WAV_CM = 0x0C;   // WAV(Mid/Side+LPC) 残差 -> CM (音声向け)
 static const uint8_t ALGO_BMP_CM  = 0x0D;   // BMP(2D 予測フィルタ) 残差 -> CM (画像向け)
 static const uint8_t ALGO_BMP_CM2 = 0x0E;  // BMP(2D 予測) 残差 + チャンネル分離 -> CM
+static const uint8_t ALGO_WAV_CM_LEGACY = 0x0F; // WAV 残差 -> CM (WAV_PRIOR/4位相なし。yuuki 等の副作用回避用の候補)
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -101,8 +102,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// WAV 4-byte位相別order-0事前確率でWAVビットストリームが非互換になったためARC6へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '6'};
+// WAV_CM_LEGACY 候補(新 algo ID 0x0F)追加でアーカイブ非互換になったためARC7へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '7'};
 
 // ==========================================================================
 // CM プロファイル
@@ -112,7 +113,10 @@ static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '6'};
 //   strideLen: スパース文脈の刻み幅 (テキスト UTF-8 は 3、x86 exe は dword 整列の 4)。
 //   tbits: 文脈テーブル t2..t9 のサイズ指数 (1<<tbits)。
 // ==========================================================================
-struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
+// applyPrior=false のとき、そのプロファイル種別に対応する静的事前確率(WAV_PRIOR 等)と
+// 位相別 order-0 分割を無効化し、事前確率導入前(legacy)の挙動を再現する。既存プロファイルは
+// 既定 true なのでビットストリーム不変。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; bool applyPrior = true; };
 
 static const int CM_RATE_SLOW[16] = {
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
@@ -134,6 +138,7 @@ static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テ
 static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29 };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 27 };   // 音声 (WAV_CM, インターリーブ4B周期)
+static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 27, false };  // WAV_CM だが prior/位相なし
 
 // ==========================================================================
 // 各モジュールの公開関数プロトタイプ

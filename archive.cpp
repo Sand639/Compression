@@ -29,6 +29,14 @@ std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
             }
             return best;
         }
+        case ALGO_WAV_CM_LEGACY: {                             // WAV 残差 -> CM (prior/位相なし。副作用回避候補)
+            std::vector<uint8_t> best;
+            for (int m = 0; m < 4; ++m) {
+                std::vector<uint8_t> cm = Encode_CM(Encode_Wav_MidSide_Delta(in, m), CM_PROF_WAV_LEGACY);
+                if (best.empty() || cm.size() < best.size()) best = std::move(cm);
+            }
+            return best;
+        }
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM (BMP プロファイル)
             return Encode_CM(Encode_Bmp_2DPredict(in), CM_PROF_BMP);
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
@@ -60,6 +68,8 @@ std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
             return Decode_BCJ(Decode_CM(in, CM_PROF_FAST));
         case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (WAV プロファイル)
             return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_WAV));
+        case ALGO_WAV_CM_LEGACY:                               // 逆順: CM -> WAV (legacy: prior/位相なし)
+            return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_WAV_LEGACY));
         case ALGO_BMP_CM:                                      // 逆順: CM -> BMP (BMP プロファイル)
             return Decode_Bmp_2DPredict(Decode_CM(in, CM_PROF_BMP));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
@@ -73,7 +83,7 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
     ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
-    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM, ALGO_BMP_CM2
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2
 };
 
 // ---- コンテナの構築 / 解析 (フォーマット 'ARC4') ----
@@ -149,6 +159,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_CM:     return "CM";
         case ALGO_BCJ_CM: return "BCJ+CM";
         case ALGO_WAV_CM: return "WAV+CM";
+        case ALGO_WAV_CM_LEGACY: return "WAV+CM(leg)";
         case ALGO_BMP_CM:  return "BMP+CM";
         case ALGO_BMP_CM2: return "BMP+CM(sep)";
         case ALGO_STORE:  return "Store";

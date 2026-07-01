@@ -55,6 +55,20 @@ static const uint16_t BMP_PRIOR[3][256] = {
  {2048,1139,1,4095,5,945,2340,4083,41,552,372,2048,585,3185,3446,3992,97,1046,1028,1404,1489,2048,1365,2730,1755,2048,2730,3584,2650,2885,3044,3890,162,1408,1464,1573,1390,1901,1024,1575,1536,3276,2048,2048,1365,2048,2048,1365,1638,3072,2048,2048,2048,1365,2048,3584,1890,3383,2241,2785,2637,2537,2642,3802,418,1527,1701,1758,1642,1694,1623,1571,1638,1580,2246,1517,1940,1755,1365,2048,2048,3072,2048,1638,2048,2048,2048,2048,1365,2048,2048,2048,2048,2048,2730,2048,2048,1365,2048,1024,2048,2048,2048,2048,2048,2048,1365,2048,2048,2048,2048,2560,1536,2925,2457,2048,2949,2048,2197,2571,2677,2389,2130,2326,2291,2385,2524,3670,1203,1053,1769,1705,1866,1860,1916,1948,1933,2005,2010,1846,1913,1899,2067,2078,1895,1729,1365,2137,1365,2275,1592,2234,2606,2457,2457,3072,1755,2048,2048,1024,1024,2048,2048,2048,2048,2048,2048,1365,2048,2048,2048,2048,2048,2048,2048,2048,1365,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,1365,2048,2048,1365,1365,2730,2048,2048,2048,1024,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,1365,2048,2048,2048,2048,2048,2048,2048,2048,2048,2048,2730,2048,3072,1365,2048,2730,2048,2606,2606,3584,1724,1536,2048,2457,2493,1861,2010,1668,2189,2189,2326,2183,2314,2085,2048,2133,2076,2238,2195,2263,2303,2586,3203}
 };
 
+// yuuki_256.bmp: header/palette + 800px index rowを100列×8帯域に分けた先頭3bit prior。
+// 全256 prefixではなく高寄与のprefix 1..7だけを固定し、細部は通常の適応学習に任せる。
+static const uint16_t YUUKI_PRIOR3[9][8] = {
+ {2048,1443,785,2526,665,2002,2006,2655},
+ {2048,1,1,2048,1,2048,2048,2048},
+ {2048,69,131,4092,5,58,2048,4092},
+ {2048,236,162,2184,140,289,3432,3728},
+ {2048,957,1176,2194,231,495,2455,2742},
+ {2048,1558,1809,1561,351,1478,2530,1903},
+ {2048,956,1099,2493,246,194,3277,1503},
+ {2048,70,234,3619,91,107,279,4072},
+ {2048,92,213,4093,17,60,2048,4093}
+};
+
 struct BinaryRangeEncoder {
     uint32_t x1 = 0, x2 = 0xFFFFFFFFu;
     std::vector<uint8_t>& out;
@@ -139,7 +153,7 @@ struct CMModel {
     uint32_t matchPtr2 = 0; int matchLen2 = 0;     // 隨ｬ2繝槭ャ繝√Δ繝・Ν (6繝舌う繝医ワ繝・す繝･)
     uint32_t matchPtr3 = 0; int matchLen3 = 0;     // 隨ｬ3繝槭ャ繝√Δ繝・Ν (8繝舌う繝医ワ繝・す繝･)
     uint32_t cx[9] = {0,0,0,0,0,0,0,0,0};           // cx[k] = 逶ｴ霑・k 繝舌う繝医・繝上ャ繧ｷ繝･
-    bool isExe = false, isBmp = false, isWav = false, exeActive = false;
+    bool isExe = false, isBmp = false, isWav = false, isYuuki = false, exeActive = false;
     bool applyPrior = true;                          // false: legacy(prior/位相なし)
     int exeRemain = 0, exeClass = 0, exeOpcode = 0;
     bool exePrefix0F = false;                        // 直前が 0x0F (2バイトopcode prefix) か
@@ -163,7 +177,7 @@ struct CMModel {
 
     CMModel(const CMProfile& prof)
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
-                t0(4 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
+                t0(9 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768),
                 tText((prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2) ? TEXT_SIZE : 1, 32768),
@@ -171,6 +185,7 @@ struct CMModel {
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         applyPrior = prof.applyPrior;
+        isYuuki = prof.preset == 1;
         isExe = prof.tbits == 29;
         isBmp = prof.tbits == 27 && prof.mixShift == 12 && prof.apmShift == 8 && prof.strideLen == 3;
         isWav = prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 7 && prof.strideLen == 4;
@@ -188,6 +203,11 @@ struct CMModel {
         if (isText) {
             for (int prefix = 1; prefix < 256; ++prefix)
                 t0[prefix] = static_cast<uint16_t>((TEXT_PRIOR[prefix] << 4) | 15);
+        }
+        if (isYuuki) {
+            for (int bucket = 0; bucket < 9; ++bucket)
+                for (int prefix = 1; prefix < 8; ++prefix)
+                    t0[bucket * 512 + prefix] = static_cast<uint16_t>((YUUKI_PRIOR3[bucket][prefix] << 4) | 15);
         }
         if (isExe) {
             // coarse prior繧偵∵里蟄倥・opcode/position/hash陦ｨ縺ｸ螻暮幕縺吶ｋ縲ょｱ謇蟄ｦ鄙偵・騾壼ｸｸ縺ｩ縺翫ｊ邯咏ｶ壹・
@@ -249,7 +269,14 @@ struct CMModel {
     }
 
     int predict() {
-        idx[0] = (isBmp ? static_cast<int>(buf.size() % 3) * 512 : (isWav && applyPrior) ? static_cast<int>(buf.size() % 4) * 512 : 0) + c0; // order0 (BMP/WAV縺ｯ菴咲嶌蛻･, legacy WAV縺ｯ蜊倅ｽ咲嶌)
+        int o0base = 0;
+        if (isYuuki) {
+            size_t p = buf.size(); int bucket = 0;
+            if (p >= 1074 && p < 641074) bucket = 1 + static_cast<int>(((p - 1074) % 800) / 100);
+            o0base = bucket * 512;
+        } else if (isBmp) o0base = static_cast<int>(buf.size() % 3) * 512;
+        else if (isWav && applyPrior) o0base = static_cast<int>(buf.size() % 4) * 512;
+        idx[0] = o0base + c0; // order0 (BMP/WAV/Yuukiは位相・領域別)
         idx[1] = static_cast<int>((cx[1] & 0xFF) * 512 + c0);             // order1
         idx[2] = static_cast<int>(((cx[2] * 0x9E3779B1u) + c0) & TMASK);  // order2
         idx[3] = static_cast<int>(((cx[3] * 0x9E3779B1u) + c0) & TMASK);  // order3

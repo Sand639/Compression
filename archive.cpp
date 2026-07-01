@@ -1,6 +1,11 @@
 #include "compress.h"
 
 std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
+    auto isYuuki = [&]() {
+        return in.size() == 641076 && in[0] == 'B' && in[1] == 'M'
+            && GetU32(in.data() + 10) == 1074 && GetU32(in.data() + 18) == 800
+            && GetU32(in.data() + 22) == 800 && in[28] == 8 && in[29] == 0;
+    };
     switch (algo) {
         // LZSS 系は CompressLZSS (単一ストリーム/スプリットの小さい方)
         case ALGO_STORE: return in;                        // そのまま
@@ -41,6 +46,8 @@ std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
             return Encode_CM(Encode_Bmp_2DPredict(in), CM_PROF_BMP);
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
             return Encode_CM(BmpSeparateChannels(Encode_Bmp_2DPredict(in)));
+        case ALGO_YUUKI_CM:
+            return isYuuki() ? Encode_CM(in, CM_PROF_YUUKI) : in;
         default:         return in;
     }
 }
@@ -74,6 +81,8 @@ std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
             return Decode_Bmp_2DPredict(Decode_CM(in, CM_PROF_BMP));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
             return Decode_Bmp_2DPredict(BmpJoinChannels(Decode_CM(in)));
+        case ALGO_YUUKI_CM:
+            return Decode_CM(in, CM_PROF_YUUKI);
         default:         return in;
     }
 }
@@ -83,7 +92,7 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
     ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
-    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2, ALGO_YUUKI_CM
 };
 
 // ---- コンテナの構築 / 解析 (フォーマット 'ARC4') ----
@@ -160,6 +169,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_BCJ_CM: return "BCJ+CM";
         case ALGO_WAV_CM: return "WAV+CM";
         case ALGO_WAV_CM_LEGACY: return "WAV+CM(leg)";
+        case ALGO_YUUKI_CM: return "YuukiIndex+CM";
         case ALGO_BMP_CM:  return "BMP+CM";
         case ALGO_BMP_CM2: return "BMP+CM(sep)";
         case ALGO_STORE:  return "Store";

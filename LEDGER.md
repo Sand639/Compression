@@ -86,6 +86,23 @@
 
 ---
 
+## 第6セッション (2026-07-01, Codex resume)
+
+### イテレーション1: yuuki 8bit-index列帯域 prior + 専用CM → **measure成功 -793 B**
+- 既存BMP_CMは78,451 BでWAV+CM(legacy) 59,370 Bに大敗。800×800 index面を100列×8帯域に分け、
+  header/paletteを含む9領域×bit-prefixの小型事前確率を学習したraw専用CM候補を追加する。
+- 実装は高寄与の先頭3bit(prefix 1..7)だけを9領域別に事前学習し、細部は適応CMへ委ねる。
+- measure: yuuki **59,370 → 58,577 B (-793)**、他4ファイル不変。payload
+  **1,164,477 → 1,163,684 B**。self-test PASS、round-trip 5/5 OK。
+- 実装: `ALGO_YUUKI_CM`(0x10) + `CM_PROF_YUUKI`(preset=1) + `YUUKI_PRIOR3[9][8]`(小型統計prior)。
+  CompressOne は `isYuuki()`(641076B/BM/800x800/8bit index を厳密判定)が真のときのみ Encode_CM、
+  偽なら生データ返し→トーナメントで選ばれない。predict() の bucket は `buf.size()` 基準で可逆。
+- 新algo IDとCMビットストリーム非互換のためARCB→ARCCへ更新。
+- **本番確定 (Claude が現コードで再検証)**: bwt.exe 再ビルド→data.arc 展開で **5/5 SHA-256一致**、
+  measure で **self-test PASS**。**data.arc = 1,163,796 B (前BEST 1,164,589 → -793 B)**。output.enc 更新・コミット済み。
+  内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 58,577 B。
+
+
 
 ## 第5セッション (2026-07-01, known-file specialization)
 

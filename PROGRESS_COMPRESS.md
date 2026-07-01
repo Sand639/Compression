@@ -1,5 +1,15 @@
 # 圧縮改良進捗
 
+## 第6セッション (2026-07-01, Codex resume → Claude が本番確定)
+- session-start BEST **1,164,589 B (ARCB)** を本番再現、5/5 SHA-256一致、self-test PASS。
+- yuuki 8bit-index列帯域 prior + raw専用CM (`ALGO_YUUKI_CM` 0x10 / `CM_PROF_YUUKI` preset=1):
+  measureで **59,370→58,577 B (-793)**、他4ファイル不変。
+- **本番確定**: data.arc 展開で **5/5 SHA-256一致**、self-test PASS。
+  **BEST 1,164,589 → 1,163,796 B (-793)**。ARCC、output.enc 更新・コミット済み。
+- 現在の **コミット済BEST: 1,163,796 B**。内訳 exe 422,511 / wav 230,139 / txt 226,254 /
+  hal 226,203 / yuuki 58,577 B（payload 1,163,684 B + ARCCヘッダ112 B）。
+- 次候補: yuuki 帯域数/prefix深さの調整、EXE_PRIOR 新クラス拡張、候補D の更なる特化。詳細は LEDGER.md。
+
 ## 第5セッション (2026-07-01, known-file specialization)
 - wagahaiwa.txt専用96フレーズ辞書: 変換単体 749,051→646,527 Bだが、CM後は
   226,633→231,214 B (+4,581)。可逆性PASS、既存CM文脈を壊すためrevert。

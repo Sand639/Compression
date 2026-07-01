@@ -95,7 +95,7 @@ struct CMModel {
     const int TBITS, TSIZE, TMASK;                  // t2..t9 縺ｮ繧ｵ繧､繧ｺ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
     static const int SM = 1 << 24;
     static const int EXE_BITS = 22, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
-    static const int TEXT_BITS = 22, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;
+    static const int TEXT_BITS = 26, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
     std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST蟆ら畑)
     std::vector<uint16_t> tText;                   // Shift-JIS讒矩繝ｻ譁・ｭ励け繝ｩ繧ｹ譁・ц (SLOW蟆ら畑)

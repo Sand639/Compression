@@ -131,10 +131,39 @@
 - 一般化: `applyPrior` は BMP/EXE/TEXT prior にも流用可能な設計。exe/bmp/text の prior ON/OFF 候補化
   (候補A案5)で更なる副作用回避が狙える。
 
-#### 次のより有望なレバー候補
-- 候補B: TeraPad.exe **ModRM/SIB バイト文脈** (exe は最大の424KB、まだ伸びしろ大)。
-- 候補C: テキスト SJIS **2-gram 文字クラス遷移** (生バイトbigramの希釈を文字クラスで回避)。
+### イテレーション7: テキスト文脈テーブル TEXT_BITS 22→26 → **成功 -359 B**
+- 発見: text の共有文脈表 tText は `TEXT_BITS=22` (4M エントリ) だが、テキスト文脈は
+  c0 + textClasses(6クラス履歴) + textPrevChar(16bit) + SJIS位相 の**衝突律速**だった。
+  文脈を増やす候補C系は逆に希釈するが、**表を広げる**と衝突が減り改善する、という仮説を検証。
+- measure スイープ (wagahaiwa.txt, 他4ファイル不変):
+  | TEXT_BITS | エントリ | tText | txt サイズ | 前段差 |
+  |---|---|---|---|---|
+  | 22 | 4M | 8MB | 226,613 | (基準) |
+  | 23 | 8M | 16MB | 226,470 | -143 |
+  | 24 | 16M | 32MB | 226,349 | -121 |
+  | 25 | 32M | 64MB | 226,289 | -60 |
+  | **26** | **64M** | **128MB** | **226,254** | **-35** ← 採用 |
+  | 27 | 128M | 256MB | 226,246 | -8 (逓減、メモリ2倍に見合わず却下) |
+- 26 を採用 (逓減の膝)。txt **226,613 → 226,254 B (-359)**、他4ファイル完全不変。
+- CMビットストリーム非互換のため magic **ARC7 → ARC8** へ更新。
+- **本番: data.arc = 1,166,348 B (1,166,707 → -359 B)**。round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 424,270 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+- 教訓: 高次文脈モデルが頭打ちに見えても、**表サイズが衝突律速なら拡大で伸びる**。
+  文脈を足す(希釈)前に、まず表サイズを疑う。exe(TBITS29=8.6GB)に対し text 128MB は余裕。
+
+#### 本番ゲート実行メモ (bwt.exe, ~各400s) — 再利用可
+- ビルド: `cmd /c C:\Users\yziku\AppData\Local\Temp\claude\build_bwt.bat` (bwt.exe 生成, -arch=x64)。
+- 圧縮: `cmd /c ...\run_compress.bat` (stdin=`compress_in.txt`="1\r\ndata\r\n" → data.arc)。
+- 展開: `cmd /c ...\run_extract.bat` (stdin=`extract_in.txt`="2\r\ndata\r\n" → data_restored/)。
+- 照合: PowerShell `Get-FileHash -Algorithm SHA256` で data/ と data_restored/ の5ファイルを比較。
+
+#### 次のより有望なレバー候補 (iter7 の後)
+- 候補B: TeraPad.exe **ModRM/SIB バイト文脈** (exe は最大の424KB、まだ伸びしろ大。ただし実装重め)。
+- 候補C: テキスト SJIS **2-gram 文字クラス遷移** → **表が衝突律速と判明したので文脈追加は希釈リスク大**。
+  やるなら TEXT_BITS を更に広げてから、または独立の粗い2文字モデルを別mixer入力として追加する形で。
 - 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。
+- 案5(applyPrior 一般化)は **効果薄と判断**: WAV以外の prior(bmp/text/exe)は各々単一ファイルにしか
+  適用されず(他ファイルへの副作用がない)ため LEGACY 候補を足しても回収する回帰が存在しない。
 
 ## 第4セッション (2026-06-30, codex/major-overhaul)
 

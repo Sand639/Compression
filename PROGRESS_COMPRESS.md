@@ -16,10 +16,17 @@
   `CMProfile.applyPrior` フラグ(既定 true=不変) + `ALGO_WAV_CM_LEGACY`(0x0F) 追加。explosion.wav は
   PRIOR 付きが最小のまま(230,139 不変)。新 algo ID 追加でアーカイブ非互換のため **ARC6→ARC7**。
 - iter5+6 合算 本番 **BEST 1,166,992→1,166,707 B (-285)**。セルフテストPASS、5/5 SHA-256一致。
-- 現在の **コミット済BEST: 1,166,707 B**。内訳 exe 424,270 / wav 230,139 / txt 226,613 /
-  hal 226,203 / yuuki 59,370 B（payload 1,166,595 B + ARC7ヘッダ112 B）。
-- 次のより有望なレバー: 候補B TeraPad.exe ModRM/SIB文脈 / 候補C SJIS 2-gram **文字クラス**遷移 /
-  候補D yuuki 専用インデックス画像 codec。詳細は LEDGER.md 冒頭の候補一覧。
+  **コミット済(2a3fdc0, ARC7)**。内訳 exe 424,270 / wav 230,139 / txt 226,613 / hal 226,203 / yuuki 59,370 B。
+
+- テキスト文脈表 **TEXT_BITS 22→26**(tText 4M→64M エントリ, 8→128MB): **成功**。measure スイープで
+  wagahaiwa.txt 226,613→226,470(23)→226,349(24)→226,289(25)→**226,254(26)**、27 は -8 で逓減のため 26 採用。
+  txt **-359 B**、他4ファイル不変。text 文脈は cold ではなく**衝突律速**だったと判明。
+- 本番 **BEST 1,166,707→1,166,348 B (-359)**。ARC8、セルフテストPASS、5/5 SHA-256一致。**コミット済**。
+- 現在の **コミット済BEST: 1,166,348 B**。内訳 exe 424,270 / wav 230,139 / txt 226,254 /
+  hal 226,203 / yuuki 59,370 B（payload 1,166,236 B + ARC8ヘッダ112 B）。
+- 次の候補: 候補B exe ModRM/SIB文脈 / 候補D yuuki 専用codec。候補C(文脈追加)は表が衝突律速のため希釈リスク大。
+  案5(applyPrior 一般化)は WAV 以外の prior が単一ファイル適用で副作用がなく効果薄と判断。詳細は LEDGER.md。
+- 教訓: 高次文脈が頭打ちに見えても、**表が衝突律速なら拡大で伸びる**。文脈追加(希釈)より先に表サイズを疑う。
 - **★ 重要なビルド発見**: VsDevCmd は **必ず `-arch=x64`** で呼ぶこと。素で呼ぶと32bit cl が選ばれ、
   CMModelの~2.7GBメモリ確保で **0xC0000409 (exit -1073740791) クラッシュ**する(コードのバグではない)。
   正しい batch = `build_session.cmd` / `build_bwt.bat`(bwt.exe 用) / `build_measure.bat`(measure.exe 用)。

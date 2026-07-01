@@ -102,8 +102,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// WAV_CM_LEGACY 候補(新 algo ID 0x0F)追加でアーカイブ非互換になったためARC7へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '7'};
+// テキスト文脈表 TEXT_BITS 22→26 でCMビットストリーム非互換になったためARC8へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '8'};
 
 // ==========================================================================
 // CM プロファイル

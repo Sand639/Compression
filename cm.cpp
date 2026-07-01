@@ -119,6 +119,7 @@ struct CMModel {
     bool isExe = false, isBmp = false, isWav = false, exeActive = false;
     bool applyPrior = true;                          // false: legacy(prior/位相なし)
     int exeRemain = 0, exeClass = 0, exeOpcode = 0;
+    bool exePrefix0F = false;                        // 直前が 0x0F (2バイトopcode prefix) か
     bool isText = false, sjisTrail = false;
     int sjisLead = 0, textIdx = 0;
     uint16_t textPrevChar = 0;
@@ -401,6 +402,11 @@ struct CMModel {
                 if (exeRemain > 0) {
                     --exeRemain;
                     if (exeRemain == 0) { exeClass = 0; exeOpcode = 0; }
+                } else if (exePrefix0F) {                                // 直前が 0x0F の 2バイトopcode
+                    exePrefix0F = false;
+                    if (B >= 0x80 && B <= 0x8F) { exeClass = 7; exeOpcode = B; exeRemain = 4; } // Jcc rel32 (相対分岐, BCJ非対象)
+                } else if (B == 0x0F) {
+                    exePrefix0F = true;                                  // 2バイトopcode prefix (次バイトで判定)
                 } else if (B == 0xE8 || B == 0xE9) {
                     exeClass = 1; exeOpcode = B; exeRemain = 4;          // CALL/JMP rel32 (BCJ蟇ｾ雎｡)
                 } else if (B >= 0xB8 && B <= 0xBF) {

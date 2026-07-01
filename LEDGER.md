@@ -190,6 +190,30 @@
   output.enc 更新。内訳 exe 423,038 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
 - 教訓: 決め打ちの「単バイトopcode+固定長imm」拡張は安全・高効果。可変長(ModRM)は偽陽性のdesyncで逆効果。
 
+### イテレーション9: exe Jcc rel32 (0F 80-8F) オペランドモデル → **測定成功 -323 B・未コミット (一時停止)**
+**現状: cm.cpp に未コミット差分あり。本番(bwt.exe)未実行・magic未更新(ARC9のまま)。下記「再開手順」参照。**
+- 何を: iter8 の単バイトopcode拡張の延長。**2バイトopcode `0F 80..0F 8F`(Jcc rel32, 条件分岐)** を
+  class 7 として追加。BCJ は E8/E9 のみ絶対化し **Jcc の rel32 は相対のまま残る**ため、近距離分岐では
+  rel32 上位3バイトが 0x00/0xFF に強く偏り、バイト位置別モデルがよく効くと期待。
+- 実装: `exePrefix0F` フラグを追加。0x0F を(オペランド外で)見たら立て、次バイトが 0x80-0x8F なら
+  exeClass=7・exeRemain=4 で rel32 窓を開く。**0x0F の1バイト先読みのみ**なので desync リスク低
+  (iter8 の ModRM 可変長スキップとは別物)。予測文脈のみ・可逆性は不変。
+- measure: TeraPad.exe **423,038 → 422,715 B (-323)**、他4ファイル不変。SCREEN_TOTAL 1,165,004→1,164,681。
+  round-trip:ALL OK, self-test PASS。→ **有望。採用方向。**
+- cm.cpp は現在この差分を**保持**(未コミット)。CMビットストリーム非互換なので採用時 **ARC9→ARC10**。
+
+#### 再開手順 (イテレーション9を完了させる)
+1. compress.h の ARCHIVE_MAGIC を **ARC9 → ARC10** に更新。
+2. `build_bwt.bat` → `run_compress.bat`(1,data) → `run_extract.bat`(2,data) → 5/5 SHA-256一致を確認
+   (下記「本番ゲート実行メモ」参照)。data.arc は 1,165,116 から -323 前後 (≈1,164,793 B) になる見込み。
+3. output.enc を data.arc で更新し合格コミット。
+
+#### 次のより有望なレバー候補 (iter9 の後)
+- 他の rel/imm オペランド opcode の追加余地: 0x0F 0x80-8F(Jcc)=iter9済。**残: なし**(主要な単/2バイト
+  固定長 rel32/imm32 はほぼ網羅)。次は eff果小の EXE_PRIOR を新クラス3-7へ学習付与(cold start緩和)。
+- 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。yuuki 現状 WAV+CM(leg) 59,370。
+- ModRM 命令(0x81/0xC7/0x69 等)の imm32 は iter8 で desync により不採用。再挑戦は偽陽性抑制が必須。
+
 #### 本番ゲート実行メモ (bwt.exe, ~各400s) — 再利用可
 - ビルド: `cmd /c C:\Users\yziku\AppData\Local\Temp\claude\build_bwt.bat` (bwt.exe 生成, -arch=x64)。
 - 圧縮: `cmd /c ...\run_compress.bat` (stdin=`compress_in.txt`="1\r\ndata\r\n" → data.arc)。

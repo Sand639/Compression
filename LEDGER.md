@@ -2,6 +2,13 @@
 
 ## 第7セッション (2026-07-02, ClaudeCode差分の検証・Codex採用)
 
+### イテレーション2: hal.bmp BMP残差bucketの符号分離 → **成功 -903 B**
+- 直前残差の大きさだけを使っていた `tBmp` 文脈を、正負別のbucketへ分離。正側の大残差 (`d > 96`) も独立bucketにして、予測器や元データは変更せず確率文脈だけを細分化した。
+- 単体スクリーニング: hal.bmp **225,006 → 224,103 B (-903)**。全体 `measure.exe`: exe 422,511 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B、payload **1,161,584 B**。self-test PASS、round-trip ALL OK。
+- CMストリーム非互換のため archive magic を **ARCD → ARCE (ARC14)** に更新。
+- 本番 `bwt.exe`: **data.arc = 1,161,696 B**。旧BEST **1,162,599 → 1,161,696 B (-903)**。展開後 **5/5 SHA-256一致**。
+- `output.enc` を新BESTへ更新済み。内訳 payload 1,161,584 B + header 112 B。
+
 ### イテレーション1: hal.bmp BMP残差「予測難易度」文脈(tBmp) → **成功 -1,197 B**
 - ClaudeCodeの未コミット差分として残っていた `cm.cpp` / `compress.h` を検証。内容は BMP_CM 専用で、直前残差の大きさ bucket と RGB phase と bit-prefix を組み合わせた `tBmp` 文脈を `st[14]` に入れるもの。
 - 既存の `NIN=15` と `st[14]` の枠を使い、text 専用文脈と排他的に BMP 専用文脈を有効化。CMストリーム非互換のため archive magic を **ARCC → ARCD (ARC13)** に更新。

@@ -5,8 +5,11 @@
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。
 - `measure.exe`: hal.bmp **226,203 → 225,006 B (-1,197)**、他ファイル不変。`SCREEN_TOTAL 1,162,487 B`、self-test PASS、round-trip ALL OK。
 - 本番 `bwt.exe`: **BEST 1,163,796 → 1,162,599 B (-1,197)**。`data.arc` 展開で **5/5 SHA-256一致**。`output.enc` 更新済み。
-- 現在のBEST: **1,162,599 B**。内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 225,006 / yuuki 58,577 B (payload 1,162,487 B + header 112 B)。
-- 次候補: halの残差bucket粒度/phase文脈の軽量調整、yuuki専用priorのprefix深度調整、exe ModRMの安全な軽量文脈。ただし採用は必ず本番 `bwt.exe` と5/5 SHA確認後。
+- halの残差bucketを符号別に分離し、正側の大残差も独立bucket化。hal **225,006 → 224,103 B (-903)**、他4ファイル不変。archive magic は **ARCE / ARC14**。
+- 全体 `measure.exe`: payload **1,161,584 B**、self-test PASS、round-trip ALL OK。本番 `bwt.exe`: **BEST 1,162,599 → 1,161,696 B (-903)**、展開後 **5/5 SHA-256一致**。`output.enc` 更新済み。
+- 現在のBEST: **1,161,696 B**。内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B (payload 1,161,584 B + header 112 B)。
+- 第7セッション累計: **1,163,796 → 1,161,696 B (-2,100 B)**。
+- 次候補: yuuki専用priorのprefix深度調整、exe ModRMの安全な軽量文脈、SJIS遷移文脈。採用は必ず本番 `bwt.exe` と5/5 SHA確認後。
 
 ## 第6セッション (2026-07-01, Codex resume → Claude が本番確定)
 - session-start BEST **1,164,589 B (ARCB)** を本番再現、5/5 SHA-256一致、self-test PASS。

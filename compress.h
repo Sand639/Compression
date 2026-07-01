@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// hal.bmp 残差 予測難易度文脈(tBmp, st[14]兼用)追加で非互換のためARC13へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'D'};  // ARCD = ARC13
+// hal.bmp 残差bucketを符号別に分離してCMストリーム非互換のためARC14へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'E'};  // ARCE = ARC14
 
 // ==========================================================================
 // CM プロファイル

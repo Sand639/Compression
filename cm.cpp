@@ -271,16 +271,19 @@ struct CMModel {
                 apm3[i * 65 + j] = initv[j];
     }
 
-    static int bmpResMag(int v) {                  // 残差の0/255からの距離を対数量子化 (0..8)
-        int d = v < 128 ? v : 256 - v;
-        if (d == 0) return 0;
-        if (d <= 2) return d;
-        if (d <= 4) return 3;
-        if (d <= 8) return 4;
-        if (d <= 16) return 5;
-        if (d <= 32) return 6;
-        if (d <= 64) return 7;
-        return 8;
+    static int bmpResMag(int v) {                  // 残差の符号 + 0/255からの距離を量子化 (0..15)
+        if (v == 0) return 0;
+        int neg = v >= 128;
+        int d = neg ? 256 - v : v;
+        int m;
+        if (d <= 2) m = d;
+        else if (d <= 4) m = 3;
+        else if (d <= 8) m = 4;
+        else if (d <= 16) m = 5;
+        else if (d <= 32) m = 6;
+        else if (!neg && d > 96) m = 15;
+        else m = 7;
+        return neg ? (7 + m) : m;
     }
     int predict() {
         int o0base = 0;

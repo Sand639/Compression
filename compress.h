@@ -102,8 +102,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// テキスト文脈表 TEXT_BITS 22→26 でCMビットストリーム非互換になったためARC8へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '8'};
+// exe オペランドモデル拡張 (PUSH/ALU/moffs/TEST imm32) でCMビットストリーム非互換のためARC9へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '9'};
 
 // ==========================================================================
 // CM プロファイル

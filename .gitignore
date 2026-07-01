@@ -87,3 +87,6 @@ Desktop.ini
 
 # 復元検証の生成物 (実行で再生成されるため追跡しない)
 data_restored/
+
+# トーナメント生成物 (output.enc が追跡対象の成果物。data.arc はその複製で再生成可)
+data.arc

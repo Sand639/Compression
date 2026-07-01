@@ -405,7 +405,17 @@ struct CMModel {
                     exeClass = 1; exeOpcode = B; exeRemain = 4;          // CALL/JMP rel32 (BCJ蟇ｾ雎｡)
                 } else if (B >= 0xB8 && B <= 0xBF) {
                     exeClass = 2; exeOpcode = B; exeRemain = 4;          // MOV reg, imm32
+                } else if (B == 0x68) {
+                    exeClass = 3; exeOpcode = B; exeRemain = 4;          // PUSH imm32
+                } else if ((B & 0xC7) == 0x05 && B < 0x40) {
+                    exeClass = 4; exeOpcode = B; exeRemain = 4;          // ALU EAX, imm32 (05/0D/.../3D)
+                } else if (B >= 0xA0 && B <= 0xA3) {
+                    exeClass = 5; exeOpcode = B; exeRemain = 4;          // MOV AL/EAX <-> moffs32 (絶対アドレス)
+                } else if (B == 0xA9) {
+                    exeClass = 6; exeOpcode = B; exeRemain = 4;          // TEST EAX, imm32
                 }
+                // ※ ModRM経由の imm32 (0x81/0xC7/0x69) は誤検出時の可変長スキップで単純opcode検出を
+                //    乱し +32B 悪化したため不採用 (iter8 で検証)。単純な単バイトopcode+imm32 に限定する。
             }
             if (isText) {
                 auto isLead = [](int x) { return (x >= 0x81 && x <= 0x9F) || (x >= 0xE0 && x <= 0xFC); };

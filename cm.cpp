@@ -136,6 +136,7 @@ struct CMModel {
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
     std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST蟆ら畑)
     std::vector<uint16_t> tText;                   // Shift-JIS讒矩繝ｻ譁・ｭ励け繝ｩ繧ｹ譁・ц (SLOW蟆ら畑)
+    std::vector<uint16_t> tBmp;                    // BMP残差 予測難易度文脈 (BMP_CM専用, st[14]兼用)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 驥阪∩ (mixCtx 譁・ц x NIN)
@@ -159,6 +160,7 @@ struct CMModel {
     bool exePrefix0F = false;                        // 直前が 0x0F (2バイトopcode prefix) か
     bool isText = false, sjisTrail = false;
     int sjisLead = 0, textIdx = 0;
+    int bmpIdx = 0, prevResMag = 0;                // BMP残差文脈(st[14]兼用): 直前残差の大きさbucket
     uint16_t textPrevChar = 0;
     uint32_t textClasses = 0;                      // 逶ｴ霑・繝医・繧ｯ繝ｳ縺ｮ4bit譁・ｭ励け繝ｩ繧ｹ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1逕ｨ)
@@ -181,6 +183,7 @@ struct CMModel {
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768),
                 tText((prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2) ? TEXT_SIZE : 1, 32768),
+                tBmp((prof.tbits == 27 && prof.mixShift == 12 && prof.apmShift == 8 && prof.strideLen == 3) ? (3 * 16 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
@@ -268,6 +271,17 @@ struct CMModel {
                 apm3[i * 65 + j] = initv[j];
     }
 
+    static int bmpResMag(int v) {                  // 残差の0/255からの距離を対数量子化 (0..8)
+        int d = v < 128 ? v : 256 - v;
+        if (d == 0) return 0;
+        if (d <= 2) return d;
+        if (d <= 4) return 3;
+        if (d <= 8) return 4;
+        if (d <= 16) return 5;
+        if (d <= 32) return 6;
+        if (d <= 64) return 7;
+        return 8;
+    }
     int predict() {
         int o0base = 0;
         if (isYuuki) {
@@ -359,6 +373,10 @@ struct CMModel {
             th = th * 0x9E3779B1u + static_cast<uint32_t>(sjisTrail ? (0x100 | sjisLead) : 0);
             textIdx = static_cast<int>(th & TEXT_MASK);
             st[14] = CM_STR.v[tText[textIdx] >> 4];
+        } else if (isBmp) {                          // BMP残差 予測難易度文脈 (st[14]兼用)
+            int phase = static_cast<int>(buf.size() % 3);
+            bmpIdx = phase * (16 * 512) + prevResMag * 512 + c0;
+            st[14] = CM_STR.v[tBmp[bmpIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
@@ -468,6 +486,7 @@ struct CMModel {
         upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]); upd(t7, idx[7]); upd(t8, idx[8]); upd(t9, idx[9]);
         if (exeActive) upd(tExe, idx[13]);
         if (isText) upd(tText, textIdx);
+        else if (isBmp) upd(tBmp, bmpIdx);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;
@@ -520,6 +539,7 @@ struct CMModel {
                 }
                 if (cls != 0) textClasses = ((textClasses << 4) | static_cast<uint32_t>(cls)) & 0xFFFFFFu;
             }
+            if (isBmp) prevResMag = bmpResMag(B);   // BMP残差の大きさbucketを更新 (次バイトの文脈)
             if (matchPtr > 0 && matchPtr < buf.size() - 1 && buf[matchPtr] == B) { ++matchPtr; ++matchLen; }
             else { matchPtr = 0; matchLen = 0; }
             if (matchPtr2 > 0 && matchPtr2 < buf.size() - 1 && buf[matchPtr2] == B) { ++matchPtr2; ++matchLen2; }

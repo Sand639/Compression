@@ -1,5 +1,14 @@
 # 改良台帳
 
+## 第7セッション (2026-07-02, ClaudeCode差分の検証・Codex採用)
+
+### イテレーション1: hal.bmp BMP残差「予測難易度」文脈(tBmp) → **成功 -1,197 B**
+- ClaudeCodeの未コミット差分として残っていた `cm.cpp` / `compress.h` を検証。内容は BMP_CM 専用で、直前残差の大きさ bucket と RGB phase と bit-prefix を組み合わせた `tBmp` 文脈を `st[14]` に入れるもの。
+- 既存の `NIN=15` と `st[14]` の枠を使い、text 専用文脈と排他的に BMP 専用文脈を有効化。CMストリーム非互換のため archive magic を **ARCC → ARCD (ARC13)** に更新。
+- `measure.exe`: hal.bmp **226,203 → 225,006 B (-1,197)**。他ファイルは不変: exe 422,511 / wav 230,139 / txt 226,254 / yuuki 58,577 B。`SCREEN_TOTAL 1,162,487 B`、self-test PASS、round-trip ALL OK。
+- 本番 `bwt.exe`: **data.arc = 1,162,599 B**。旧BEST **1,163,796 → 1,162,599 B (-1,197)**。展開後 **5/5 SHA-256一致**。
+- `output.enc` を新BESTへ更新済み。内訳: exe 422,511 / wav 230,139 / txt 226,254 / hal 225,006 / yuuki 58,577 B (payload 1,162,487 B + header 112 B)。
+
 ## 🆕 未着手の採用候補（ChatGPT案を現状と照合して精査・2026-07-01追加 / 上から優先）
 
 > 現BEST = 1,166,348 B (ARC8, 2a3fdc0→8e94422 時点)。**採用の最終条件（絶対に守る）**:

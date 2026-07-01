@@ -102,8 +102,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// exe オペランドモデル拡張 (PUSH/ALU/moffs/TEST imm32) でCMビットストリーム非互換のためARC9へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '9'};
+// exe 拡張operand prior (PUSH/ALU/moffs/TEST/Jcc) 追加でCMビットストリーム非互換のためARC11へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'B'};  // ARCB = ARC11
 
 // ==========================================================================
 // CM プロファイル

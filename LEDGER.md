@@ -190,8 +190,7 @@
   output.enc 更新。内訳 exe 423,038 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
 - 教訓: 決め打ちの「単バイトopcode+固定長imm」拡張は安全・高効果。可変長(ModRM)は偽陽性のdesyncで逆効果。
 
-### イテレーション9: exe Jcc rel32 (0F 80-8F) オペランドモデル → **測定成功 -323 B・未コミット (一時停止)**
-**現状: cm.cpp に未コミット差分あり。本番(bwt.exe)未実行・magic未更新(ARC9のまま)。下記「再開手順」参照。**
+### イテレーション9: exe Jcc rel32 (0F 80-8F) オペランドモデル → **成功 -323 B**
 - 何を: iter8 の単バイトopcode拡張の延長。**2バイトopcode `0F 80..0F 8F`(Jcc rel32, 条件分岐)** を
   class 7 として追加。BCJ は E8/E9 のみ絶対化し **Jcc の rel32 は相対のまま残る**ため、近距離分岐では
   rel32 上位3バイトが 0x00/0xFF に強く偏り、バイト位置別モデルがよく効くと期待。
@@ -200,17 +199,23 @@
   (iter8 の ModRM 可変長スキップとは別物)。予測文脈のみ・可逆性は不変。
 - measure: TeraPad.exe **423,038 → 422,715 B (-323)**、他4ファイル不変。SCREEN_TOTAL 1,165,004→1,164,681。
   round-trip:ALL OK, self-test PASS。→ **有望。採用方向。**
-- cm.cpp は現在この差分を**保持**(未コミット)。CMビットストリーム非互換なので採用時 **ARC9→ARC10**。
+- CMビットストリーム非互換のため magic **ARC9 → ARC10(実装値 ARCA)** へ更新。
+- 本番: **data.arc = 1,164,793 B (1,165,116 → -323 B)**。real_data(data.zip展開)で round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 422,715 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
 
-#### 再開手順 (イテレーション9を完了させる)
-1. compress.h の ARCHIVE_MAGIC を **ARC9 → ARC10** に更新。
-2. `build_bwt.bat` → `run_compress.bat`(1,data) → `run_extract.bat`(2,data) → 5/5 SHA-256一致を確認
-   (下記「本番ゲート実行メモ」参照)。data.arc は 1,165,116 から -323 前後 (≈1,164,793 B) になる見込み。
-3. output.enc を data.arc で更新し合格コミット。
+### イテレーション10: exe 拡張オペランド prior (class3-7) → **成功 -204 B**
+- 何を: iter8/9 で追加した PUSH imm32 / ALU EAX imm32 / moffs32 / TEST EAX imm32 / Jcc rel32 の
+  class3-7 について、BCJ後TeraPad.exeから byte-position × bit-prefix の小型統計事前確率
+  `EXE_PRIOR_EXT[20][256]` を学習し、`tExe` 初期値へ追加。元データではなく統計分布のみの固定化。
+- 既存 class1-2 (E8/E9, B8-BF) と同じ hash (`prefix`, `opcode`, `class/remain`, `pos16`) で初期化し、
+  cold start を緩和。可変長 ModRM パースは再導入しない。
+- measure(単体): TeraPad.exe **422,715 → 422,511 B (-204)**。他ファイルに影響しない exe 専用 prior。
+- CMビットストリーム非互換のため magic **ARC10(ARCA) → ARC11(ARCB)** へ更新。
+- 本番: **real_data.arc = 1,164,589 B (1,164,793 → -204 B)**。round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
 
-#### 次のより有望なレバー候補 (iter9 の後)
-- 他の rel/imm オペランド opcode の追加余地: 0x0F 0x80-8F(Jcc)=iter9済。**残: なし**(主要な単/2バイト
-  固定長 rel32/imm32 はほぼ網羅)。次は eff果小の EXE_PRIOR を新クラス3-7へ学習付与(cold start緩和)。
+#### 次のより有望なレバー候補 (iter10 の後)
+- 他の rel/imm オペランド opcode の追加余地はほぼ消化済み。EXE_PRIOR class3-7 も iter10 で採用。
 - 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。yuuki 現状 WAV+CM(leg) 59,370。
 - ModRM 命令(0x81/0xC7/0x69 等)の imm32 は iter8 で desync により不採用。再挑戦は偽陽性抑制が必須。
 

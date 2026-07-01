@@ -30,15 +30,23 @@
 - 現在の **コミット済BEST: 1,165,116 B**。内訳 exe 423,038 / wav 230,139 / txt 226,254 /
   hal 226,203 / yuuki 59,370 B（payload 1,165,004 B + ARC9ヘッダ112 B）。
 
-### ⏸ イテレーション9 (測定成功・未コミット・一時停止) — 2026-07-01
-- **cm.cpp に未コミット差分あり。本番未実行・magic未更新(ARC9)。再開時は LEDGER.md「イテレーション9 再開手順」参照。**
+### ✅ イテレーション9 (採用済) — 2026-07-01
 - exe **Jcc rel32 (0F 80-8F, 条件分岐)** を class 7 として追加。BCJ非対象で rel32 が相対のまま残り、
   近距離分岐の上位バイトが 0x00/0xFF に偏るためバイト位置別モデルが効く。実装は `exePrefix0F` フラグで
   0x0F の1バイト先読みのみ(desyncリスク低)。
 - measure: TeraPad.exe **423,038→422,715 B (-323)**、他4ファイル不変。SCREEN_TOTAL 1,164,681。round-trip:ALL OK。
-- 採用時は CMビットストリーム非互換のため **ARC9→ARC10** + bwt.exe 本番ゲート + output.enc 更新が必要。
-  本番 data.arc は 1,165,116 から約 -323 (≈1,164,793 B) 見込み。
-- 次候補: EXE_PRIOR を新クラス3-7へ学習付与(cold start緩和, 効果小) / 候補D yuuki 専用codec。詳細は LEDGER.md。
+- 本番 **BEST 1,165,116→1,164,793 B (-323)**。ARC10(実装値 ARCA)、セルフテストPASS、5/5 SHA-256一致。
+  output.enc 更新。内訳 exe 422,715 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+- 現在の **BEST: 1,164,793 B**。
+
+### ✅ イテレーション10 (採用済) — 2026-07-01
+- exe 拡張オペランド prior: iter8/9 で追加した class3-7 (PUSH/ALU-EAX/moffs/TEST/Jcc) に、
+  BCJ後TeraPad.exe由来の byte-position × bit-prefix 小型統計事前確率 `EXE_PRIOR_EXT[20][256]` を追加。
+- measure: TeraPad.exe **422,715→422,511 B (-204)**。他4ファイル不変。
+- 本番 **BEST 1,164,793→1,164,589 B (-204)**。ARC11(実装値 ARCB)、セルフテストPASS、5/5 SHA-256一致。
+  output.enc 更新。内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+- 現在の **BEST: 1,164,589 B**。
+- 次候補: 候補D yuuki 専用codec / ModRM偽陽性抑制つき軽量文脈。詳細は LEDGER.md。
 - 教訓: 決め打ちの「単バイトopcode+固定長imm」拡張は安全・高効果。可変長(ModRM)は偽陽性desyncで逆効果。
   高次文脈が頭打ちに見えても、**表が衝突律速なら拡大で伸びる**(iter7)。文脈追加(希釈)より先に表サイズを疑う。
 - **★ 重要なビルド発見**: VsDevCmd は **必ず `-arch=x64`** で呼ぶこと。素で呼ぶと32bit cl が選ばれ、

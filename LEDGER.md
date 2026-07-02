@@ -868,3 +868,7 @@
 - **iter51 結果: ✅ 採用 -3,106 B (measure判定 3/5)**。prior count 7→11 (信頼期間延長):
   wav -1,336 / hal -1,035 / txt -591 / yuuki -144。exe は CM_RATE_FAST が n=3 以降平坦のため
   count 不感 (変化なし)。payload 1,107,257→1,104,151。ARCu/ARC56。次: count=13。
+- **iter52 結果: ✅ 採用 -766 B (measure判定 4/5)**。prior count スイープ: 11:1,104,151 /
+  13:1,103,508 / **15:1,103,385 (採用)**。count=15 (飽和) が最適 — 固定ファイルの実測確率
+  なので信頼しきって良い。過去の TEXT_BIGRAM_PRIOR 失敗の敗因は count でなく prior の質と確定。
+  payload 1,104,151→1,103,385。ARCw/ARC58。count 系累計 -3,872。

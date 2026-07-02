@@ -28,13 +28,24 @@ int main(int argc, char** argv) {
     const int TBITS = (kind == "EXE") ? 29 : 27;   // exe プロファイルのみ tbits=29
     const uint32_t TMASK = (1u << TBITS) - 1;
     std::vector<uint32_t> zc(static_cast<size_t>(1) << TBITS, 0), oc(static_cast<size_t>(1) << TBITS, 0);
+    // ORDER >= 90: stride/sparse 文脈モード (t9)。stride = ORDER - 90。
+    // cm.cpp: sh3 = c0; sh3 = sh3*K + buf[p-s]+1; ... (c0 起点で順序が cxN 系と逆)
+    const int STRIDE = (ORDER >= 90) ? ORDER - 90 : 0;
     for (size_t p = 0; p < v.size(); ++p) {
         uint32_t cxN = 0;
-        for (int j = 1; j <= ORDER; ++j)
-            if (p >= static_cast<size_t>(j)) cxN = cxN * 0x9E3779B1u + v[p - j] + 1u;
+        if (STRIDE == 0)
+            for (int j = 1; j <= ORDER; ++j)
+                if (p >= static_cast<size_t>(j)) cxN = cxN * 0x9E3779B1u + v[p - j] + 1u;
         int c0 = 1;
         for (int k = 7; k >= 0; --k) {
-            uint32_t idx = (cxN * 0x9E3779B1u + static_cast<uint32_t>(c0)) & TMASK;
+            uint32_t idx;
+            if (STRIDE > 0) {
+                uint32_t sh3 = static_cast<uint32_t>(c0);
+                for (int j = 1; j <= 3; ++j)
+                    if (p >= static_cast<size_t>(j * STRIDE)) sh3 = sh3 * 0x9E3779B1u + v[p - j * STRIDE] + 1u;
+                idx = sh3 & TMASK;
+            } else
+                idx = (cxN * 0x9E3779B1u + static_cast<uint32_t>(c0)) & TMASK;
             int bit = (v[p] >> k) & 1;
             if (bit) ++oc[idx]; else ++zc[idx];
             c0 = (c0 << 1) | bit;
@@ -48,8 +59,8 @@ int main(int argc, char** argv) {
         if (p4 < 1) p4 = 1; else if (p4 > 4095) p4 = 4095;
         out.push_back((static_cast<uint64_t>(ix) << 12) | static_cast<uint64_t>(p4));
     }
-    std::printf("// t%d prior %s: %zu entries (TH=%u). idx=ハッシュ済み, 下位12bit=p\n", ORDER, kind.c_str(), out.size(), TH);
-    std::printf("static const uint64_t T%d_PRIOR_%s[%zu] = {\n", ORDER, kind.c_str(), out.size());
+    std::printf("// %s%d prior %s: %zu entries (TH=%u). idx=ハッシュ済み, 下位12bit=p\n", STRIDE > 0 ? "t9s" : "t", STRIDE > 0 ? STRIDE : ORDER, kind.c_str(), out.size(), TH);
+    std::printf("static const uint64_t T%s%d_PRIOR_%s[%zu] = {\n", STRIDE > 0 ? "9S" : "", STRIDE > 0 ? STRIDE : ORDER, kind.c_str(), out.size());
     for (size_t i = 0; i < out.size(); ++i)
         std::printf("%lluull%s%s", static_cast<unsigned long long>(out[i]), i + 1 < out.size() ? "," : "", (i % 8 == 7) ? "\n" : "");
     std::printf("};\n");

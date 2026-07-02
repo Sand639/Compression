@@ -827,3 +827,6 @@
   ARCc/ARC38。次: t8/t9 prior。
 - **iter34 結果: ✅ 採用 -199 B (measure判定 1/5)**。t8 prior: text -67 / hal -91 / yuuki -41。
   payload 1,126,430→1,126,231。ARCd/ARC39。次: t9 (order-8テーブルの最終)。
+- **iter35 結果: ✅ 採用 -795 B (measure判定 2/5)**。t9 (stride) prior: text s2 -237 /
+  hal s3 -317 / yuuki s4 -241。stride は order 系と独立情報のため t7/t8 より効いた。
+  payload 1,126,231→1,125,436。ARCe/ARC40。次: wav t9s4 と exe の order 系 prior。

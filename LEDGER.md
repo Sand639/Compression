@@ -2,6 +2,10 @@
 
 ## 第7セッション (2026-07-02, ClaudeCode差分の検証・Codex採用)
 
+### イテレーション3: yuuki専用priorを先頭3bit→4bitへ拡張 → **失敗 +1 B・revert**
+- 9領域別priorの既存prefix 1..7を保持し、固定ファイルから算出したprefix 8..15を追加。単体round-tripはOKだが、yuuki **58,577 → 58,578 B (+1)** と僅かに悪化した。
+- 下位側は適応CMへ任せる現行3bit版が最良。4bit版コードはrevertし、BEST **1,161,696 B (ARCE)** を維持。
+
 ### イテレーション2: hal.bmp BMP残差bucketの符号分離 → **成功 -903 B**
 - 直前残差の大きさだけを使っていた `tBmp` 文脈を、正負別のbucketへ分離。正側の大残差 (`d > 96`) も独立bucketにして、予測器や元データは変更せず確率文脈だけを細分化した。
 - 単体スクリーニング: hal.bmp **225,006 → 224,103 B (-903)**。全体 `measure.exe`: exe 422,511 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B、payload **1,161,584 B**。self-test PASS、round-trip ALL OK。

@@ -803,3 +803,5 @@
 - **iter26 結果: ✅ 採用 -179 B (measure判定 2/5)**。t2 (order-2) prior wav 用 TH=8 (31K件,
   248KB<599KB)。payload 1,138,068→1,137,889。ARCV/ARC31。
 - 次: t2 prior の TH=4 確認 (基準内なら) と hal への展開。
+- **iter26b 結果: ✅ 採用 -509 B (measure判定 3/5)**。t2 prior wav TH=8→4 (54.5K件, 436KB 基準内)。
+  payload 1,137,889→1,137,380。wav t2 prior 累計 -688。次: t2 を hal へ展開。

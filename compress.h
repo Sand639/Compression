@@ -103,7 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// tYuuki の更新率を CM_RATE_SLOW (床2849) に変更しCMストリーム非互換のためARC24へ更新。
+// tYuuki の更新率を専用テーブル (CM_RATE_YUUKI_T, 床7710) に変更しCMストリーム非互換のためARC24へ更新。
+// (hal フィルタ選択ヒステリシスはエンコーダ側のみでフォーマット不変のため magic 据え置き)
 static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'O'};  // ARCO = ARC24
 
 // ==========================================================================

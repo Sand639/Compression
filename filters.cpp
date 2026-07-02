@@ -573,6 +573,7 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     int bitCost[256];
     for (int v = 0; v < 256; ++v) { int sv = (v < 128) ? v : v - 256; int a = sv < 0 ? -sv : sv; bitCost[v] = static_cast<int>(std::log2(1.0 + a) * 256.0 + 0.5); }
 
+    int prevF = -1;                                  // 前行のフィルタ (ヒステリシス用)
     for (size_t r = 0; r < rows; ++r) {
         const uint8_t* row   = pix + r * stride;
         const uint8_t* prow  = (r > 0) ? pix + (r - 1) * stride : nullptr;
@@ -594,8 +595,12 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
                 tmp[f][x] = res;
                 cost += bitCost[res];                         // log2(1+|残差|) コスト
             }
+            // ヒステリシス: 前行と同じフィルタを 2% 割引。フィルタ切替は残差分布の切替であり
+            // 後段 CM の学習を乱すため、コスト同等なら継続を選ぶ (エンコーダ側のみ・可逆性不変)。
+            if (f == prevF) cost -= cost / 25;   // 4% (探索: 2%:-82 / 4%:-216 / 8%:同値平坦)
             if (bestCost < 0 || cost < bestCost) { bestCost = cost; bestF = f; }
         }
+        prevF = bestF;
         ftypes[r] = static_cast<uint8_t>(bestF);
         std::copy(tmp[bestF].begin(), tmp[bestF].end(), resid.begin() + r * stride);
     }

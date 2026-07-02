@@ -293,3 +293,6 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter14: tYuuki 専用 rate (床7710, CM_RATE_YUUKI_T): yuuki 50,483→50,394 (-89)。
   **BEST 1,149,901 → 1,149,812 B**。5/5 SHA一致、ARCO/ARC24。
 - 次の一手: tWav / tBmp の床探索 (iter14 の横展開)。
+- iter15 tWav/tBmp rate探索 失敗 / iter16 hal フィルタヒステリシス4%:
+  hal 220,804→220,588 (-216)。**BEST 1,149,812 → 1,149,596 B**。magic不変(ARCO)。
+- 次の一手: WAV のブロックM/S・LPC選択にも同様のヒステリシスを試す。

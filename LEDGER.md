@@ -859,3 +859,5 @@
 - **iter48 結果: ✅ 採用 -1,115 B**。TH緩和 batch5 (yuuki/text/hal の t5-t8)。
   **bwt フル確認 (5/5回目): 正式 BEST 1,109,427 B、5/5 SHA一致**。ARCr/ARC53。
 - 次: TH緩和最終弾 (yuuki t2→2, yuuki t9s4→3, hal t9s3→4, wav t2→3)。
+- **iter49 結果: ✅ 採用 -1,903 B (measure判定 1/5)**。TH緩和 yuuki t2→2 / t9s4→3 / hal t9s3→4 /
+  wav t2→3。payload 1,109,315→1,107,412。ARCs/ARC54。

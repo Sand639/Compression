@@ -820,3 +820,5 @@
 - 次: t5 prior。逓減中だがまだ黒字。
 - **iter31 結果: ✅ 採用 -754 B (measure判定 3/5)**。t5 prior: text -509 / hal -127 / yuuki -118。
   payload 1,128,063→1,127,309。ARCa/ARC36。次: t6。
+- **iter32 結果: ✅ 採用 -513 B (measure判定 4/5)**。t6 prior: text -239 / hal -191 / yuuki -83。
+  payload 1,127,309→1,126,796。ARCb/ARC37。次: t7 (次回フル確認)。

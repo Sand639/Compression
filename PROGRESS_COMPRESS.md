@@ -123,6 +123,7 @@
 - iter64: 反復パス2: payload 1,033,069→1,021,479 (**-11,590!!!**)。**output.enc見込み ~997.6KB — 1,000KB(1,024,000B基準)突破!!** ARC6b/ARC68。(measure判定 4/5)
 - iter65: 反復パス3: payload 1,021,479→1,013,238 (-8,241)。ARC7b/ARC69。
 - **🎉 bwtフル確認PASS: 正式BEST 1,013,350 B ≈ 989.6KB (5/5 SHA一致) — 1,000KB目標を正式達成!!** output.enc更新。
+- iter66: 反復パス4: payload 1,013,238→1,007,387 (-5,851)。ARC8b/ARC70。(measure判定 1/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

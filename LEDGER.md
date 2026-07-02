@@ -865,3 +865,6 @@
   payload 1,107,412→1,107,257。ARCt/ARC55。TH緩和はほぼ底。
 - 次: **prior count 調整** — bakeT 系の焼き込み count=7 を 11 へ (priorの信頼期間を延長)。
   全 prior に一括で効く1パラメータ。
+- **iter51 結果: ✅ 採用 -3,106 B (measure判定 3/5)**。prior count 7→11 (信頼期間延長):
+  wav -1,336 / hal -1,035 / txt -591 / yuuki -144。exe は CM_RATE_FAST が n=3 以降平坦のため
+  count 不感 (変化なし)。payload 1,107,257→1,104,151。ARCu/ARC56。次: count=13。

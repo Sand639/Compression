@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// text t9s2→TH12 / wav t9s4→TH5 緩和でCMストリーム非互換のためARC55へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 't'};  // ARCt = ARC55
+// prior焼き込みcountを7→11に変更しCMストリーム非互換のためARC56へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'u'};  // ARCu = ARC56
 
 // ==========================================================================
 // CM プロファイル

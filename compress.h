@@ -104,7 +104,7 @@ struct StoredFile {
 };
 
 // 全ミキサー/APM prior を反復更新しCMストリーム非互換のためARC67へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '9'};  // ARC9b = ARC71
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'A'};  // ARCA2 = ARC72
 
 // ==========================================================================
 // CM プロファイル

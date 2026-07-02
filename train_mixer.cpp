@@ -26,14 +26,22 @@ int main(int argc, char** argv) {
     } else {
         if (!ReadFileFs("data/wagahaiwa_nekodearu.txt", v)) return 1;
     }
+    const int which = (argc > 3) ? std::atoi(argv[3]) : 1;   // 1=w, 2=w2, 3=w3, 4=w4
     const char* dump = "mixer_dump.bin";
     Encode_CM_DumpState(v, prof, dump);
     FILE* f = std::fopen(dump, "rb");
     if (!f) return 1;
     uint64_t wn = 0;
-    if (std::fread(&wn, 8, 1, f) != 1) return 1;
-    std::vector<int> w(wn);
-    if (std::fread(w.data(), sizeof(int), wn, f) != wn) return 1;
+    std::vector<int> w;
+    for (int t = 1; t <= which; ++t) {                        // 目的テーブルまで読み飛ばす
+        if (std::fread(&wn, 8, 1, f) != 1) return 1;
+        if (t == which) {
+            w.resize(wn);
+            if (std::fread(w.data(), sizeof(int), wn, f) != wn) return 1;
+        } else {
+            _fseeki64(f, static_cast<long long>(wn) * 4, SEEK_CUR);
+        }
+    }
     std::fclose(f);
     // 初期値 1<<14 との差の絶対値で降順ソートし上位 maxN を出力
     std::vector<std::pair<long, uint32_t>> diffs;
@@ -45,9 +53,9 @@ int main(int argc, char** argv) {
     std::sort(diffs.begin(), diffs.end(), [](auto& a, auto& b) { return a.first > b.first; });
     if (diffs.size() > maxN) diffs.resize(maxN);
     std::sort(diffs.begin(), diffs.end(), [](auto& a, auto& b) { return a.second < b.second; });
-    std::printf("// mixer w prior %s: %zu entries (maxN=%zu, w size=%llu). 上位32bit=idx, 下位32bit=int32重み\n",
-                kind.c_str(), diffs.size(), maxN, static_cast<unsigned long long>(wn));
-    std::printf("static const uint64_t W_PRIOR_%s[%zu] = {\n", kind.c_str(), diffs.size());
+    std::printf("// mixer w%d prior %s: %zu entries (maxN=%zu, size=%llu). 上位32bit=idx, 下位32bit=int32重み\n",
+                which, kind.c_str(), diffs.size(), maxN, static_cast<unsigned long long>(wn));
+    std::printf("static const uint64_t W%s_PRIOR_%s[%zu] = {\n", which == 1 ? "" : (which == 2 ? "2" : (which == 3 ? "3" : "4")), kind.c_str(), diffs.size());
     for (size_t i = 0; i < diffs.size(); ++i) {
         uint64_t e = (static_cast<uint64_t>(diffs[i].second) << 32) | static_cast<uint32_t>(w[diffs[i].second]);
         std::printf("%lluull%s%s", static_cast<unsigned long long>(e), i + 1 < diffs.size() ? "," : "", (i % 8 == 7) ? "\n" : "");

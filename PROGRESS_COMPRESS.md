@@ -265,3 +265,9 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter4: exe order-0 の PE領域分割 (o0base=peRegion×512): **BEST 1,161,555 → 1,161,547 B (-8)**。
   5/5 SHA一致、ARCG/ARC16。fileKindリファクタ(スコア不変, 270e9ec)も完了済み。
 - 次の一手: iter5 = exe ModRM 1バイト文脈 (exeClass=10, remain=1固定でdesync回避)。
+- iter5 exe ModRM文脈 +313 / iter6 text生bigram +1,017 / iter7 量子化bigram +499 — いずれも失敗・revert済
+  (教訓: exe専用モデルは「order-Nで予測しにくいoperandのみ」有効 / tTextは密度飽和)。
+- iter8: hal.bmp 縦方向残差bucket (buf[p-1800], 行1800B決め打ち) を tBmp 文脈に追加:
+  hal 224,103→220,804 (-3,299)。**BEST 1,161,547 → 1,158,248 B**。5/5 SHA一致、ARCH/ARC17。
+- 次の一手: iter9 = hal prevResMag を左隣同チャンネル(p-3)に変更/追加の比較。
+  iter10 = yuuki 縦文脈 (p-800, st[14]空き)。

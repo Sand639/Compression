@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// exe order-0 の PE領域分割 (peRegion o0base) でCMストリーム非互換のためARC16へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'G'};  // ARCG = ARC16
+// hal.bmp 縦方向残差bucket (upMag) を tBmp 文脈に追加しCMストリーム非互換のためARC17へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'H'};  // ARCH = ARC17
 
 // ==========================================================================
 // CM プロファイル

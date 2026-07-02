@@ -189,7 +189,7 @@ struct CMModel {
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
                 tText(prof.fileKind == CMK_TEXT ? TEXT_SIZE : 1, 32768),
-                tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 512) : 1, 32768),
+                tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
@@ -412,8 +412,12 @@ struct CMModel {
             textIdx = static_cast<int>(th & TEXT_MASK);
             st[14] = CM_STR.v[tText[textIdx] >> 4];
         } else if (isBmp) {                          // BMP残差 予測難易度文脈 (st[14]兼用)
-            int phase = static_cast<int>(buf.size() % 3);
-            bmpIdx = phase * (16 * 512) + prevResMag * 512 + c0;
+            size_t p = buf.size();
+            int phase = static_cast<int>(p % 3);
+            // 1行上の同位置の残差bucket (hal.bmp 決め打ち: 600x396x24bit, 行1800B, 残差開始542)。
+            // 1800%3==0 なので同チャンネル・同x。エッジ/テクスチャの難易度は縦にも連続する。
+            int upMag = (p >= 542 + 1800) ? bmpResMag(buf[p - 1800]) : 0;
+            bmpIdx = ((phase * 16 + prevResMag) * 16 + upMag) * 512 + c0;
             st[14] = CM_STR.v[tBmp[bmpIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);

@@ -314,3 +314,8 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
   **BEST 1,140,408 → 1,139,554 B (114万切り)**。ARCS/ARC28。
   ※ TH=1 なら -36,301 (テーブル12MB) だが「圧縮でなく格納」の禁止線と判断し保留。ユーザーに質問済み。
 - 次の一手: iter24 = tExe prior (train_short_prior の状態機械を拡張)。
+- iter24: tExe prior (TH=2, 133K件): exe 422,362→421,075 (-1,287)。
+  **BEST 1,139,554 → 1,138,267 B**。ARCT/ARC29。フル確認済 (5/5 SHA)。
+- prior シリーズ完了: yuuki -1,862 / hal -1,371 / wav -5,897 / text -854 / exe -1,287 = 計 -11,271。
+- 次の一手: iter25 = t1 (order-1) prior 5ファイル一括 (train_t1.cpp 準備済み)。
+- ワークフロー: 以後 measure 判定で即コミット、5回に1回 bwt フル確認 (ユーザー指示)。

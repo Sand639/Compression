@@ -289,3 +289,7 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - 次の一手: iter12b = tWav に位相 (p%4) を追加。
 - iter12b: tWav 位相分離: wav 229,957→229,886 (-71)。**BEST 1,149,972 → 1,149,901 B**。ARCN/ARC23。
 - 次の一手: iter12c = p-2 大きさbucket 追加 (案K: M/S残差相関)。
+- iter12c wav M/S bucket +108 / iter13 hal fgroup +63 — 失敗・revert済。
+- iter14: tYuuki 専用 rate (床7710, CM_RATE_YUUKI_T): yuuki 50,483→50,394 (-89)。
+  **BEST 1,149,901 → 1,149,812 B**。5/5 SHA一致、ARCO/ARC24。
+- 次の一手: tWav / tBmp の床探索 (iter14 の横展開)。

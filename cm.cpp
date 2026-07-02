@@ -549,12 +549,21 @@ struct CMModel {
             if (n < 15) ++n;
             t[ix] = static_cast<uint16_t>((pr << 4) | n);
         };
+        // 専用テーブルを個別の rate で更新する版 (tYuuki は WAV 床4096 より深い学習が合う)
+        auto updR = [&](std::vector<uint16_t>& t, int ix, const int* rt) {
+            uint16_t e = t[ix];
+            int n = e & 15, pr = e >> 4;
+            pr += (((tgt - pr) * rt[n]) >> 16);
+            if (pr < 0) pr = 0; else if (pr > 4095) pr = 4095;
+            if (n < 15) ++n;
+            t[ix] = static_cast<uint16_t>((pr << 4) | n);
+        };
         upd(t0, idx[0]); upd(t1, idx[1]); upd(t2, idx[2]); upd(t3, idx[3]);
         upd(t4, idx[4]); upd(t5, idx[5]); upd(t6, idx[6]); upd(t7, idx[7]); upd(t8, idx[8]); upd(t9, idx[9]);
         if (exeActive) upd(tExe, idx[13]);
         if (isText) upd(tText, textIdx);
         else if (isBmp) upd(tBmp, bmpIdx);
-        else if (isYuuki) upd(tYuuki, yuukiIdx);
+        else if (isYuuki) updR(tYuuki, yuukiIdx, CM_RATE_YUUKI_T);
         else if (isWav) upd(tWav, wavIdx);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {

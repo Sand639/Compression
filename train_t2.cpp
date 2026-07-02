@@ -7,9 +7,16 @@
 
 int main(int argc, char** argv) {
     const uint32_t TH = (argc > 1) ? static_cast<uint32_t>(std::atoi(argv[1])) : 8;
+    const std::string kind = (argc > 2) ? argv[2] : "WAV";   // WAV / HAL
     std::vector<uint8_t> raw;
-    if (!ReadFileFs("data/explosion.wav", raw)) return 1;
-    const std::vector<uint8_t> v = Encode_Wav_MidSide_Delta(raw, 3);
+    std::vector<uint8_t> v;
+    if (kind == "HAL") {
+        if (!ReadFileFs("data/hal.bmp", raw)) return 1;
+        v = Encode_Bmp_2DPredict(raw);
+    } else {
+        if (!ReadFileFs("data/explosion.wav", raw)) return 1;
+        v = Encode_Wav_MidSide_Delta(raw, 3);
+    }
     const uint32_t TMASK = (1u << 27) - 1;
     std::vector<uint32_t> zc(static_cast<size_t>(1) << 27, 0), oc(static_cast<size_t>(1) << 27, 0);
     for (size_t p = 0; p < v.size(); ++p) {
@@ -32,8 +39,8 @@ int main(int argc, char** argv) {
         if (p4 < 1) p4 = 1; else if (p4 > 4095) p4 = 4095;
         out.push_back((static_cast<uint64_t>(ix) << 12) | static_cast<uint64_t>(p4));
     }
-    std::printf("// t2 prior WAV: %zu entries (TH=%u). 上位27bit=idx (ハッシュ済み), 下位12bit=p\n", out.size(), TH);
-    std::printf("static const uint64_t T2_PRIOR_WAV[%zu] = {\n", out.size());
+    std::printf("// t2 prior %s: %zu entries (TH=%u). 上位27bit=idx (ハッシュ済み), 下位12bit=p\n", kind.c_str(), out.size(), TH);
+    std::printf("static const uint64_t T2_PRIOR_%s[%zu] = {\n", kind.c_str(), out.size());
     for (size_t i = 0; i < out.size(); ++i)
         std::printf("%lluull%s%s", static_cast<unsigned long long>(out[i]), i + 1 < out.size() ? "," : "", (i % 8 == 7) ? "\n" : "");
     std::printf("};\n");

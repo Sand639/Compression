@@ -805,3 +805,5 @@
 - 次: t2 prior の TH=4 確認 (基準内なら) と hal への展開。
 - **iter26b 結果: ✅ 採用 -509 B (measure判定 3/5)**。t2 prior wav TH=8→4 (54.5K件, 436KB 基準内)。
   payload 1,137,889→1,137,380。wav t2 prior 累計 -688。次: t2 を hal へ展開。
+- **iter27 結果: ✅ 採用 -662 B (measure判定 4/5)**。t2 prior hal TH=4 (43K件, 347KB 基準内)。
+  payload 1,137,380→1,136,718。t2 系累計 -1,350。次: t2 text/exe/yuuki 展開 → 次回フル確認。

@@ -307,3 +307,6 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - 次の一手: prior焼き込みの横展開 — iter21 tBmp (hal, 期待大) → tWav → tExe。
 - iter21: tBmp prior (TH=1): hal 220,582→219,211 (-1,371)。**BEST 1,147,676 → 1,146,305 B**。ARCQ/ARC26。
 - 次の一手: iter22 = tWav prior (mode3=L/R独立で学習済み、組み込み中)。
+- iter22: tWav prior (TH=1, 117K件, mode3=L/R独立): wav 229,834→223,937 (-5,897!)。
+  **BEST 1,146,305 → 1,140,408 B**。ARCR/ARC27。
+- 次の一手: iter23 = tText prior (TH高めで頻出のみ) → iter24 = tExe prior。

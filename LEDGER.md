@@ -748,3 +748,9 @@
   本番 bwt: **1,147,676→1,146,305 B**、5/5 SHA一致、ARCQ/ARC26。
 - iter22 準備: wav 勝ちモードは **stereoMode=3 (L/R独立)** と判明 (M/S 306,720 vs L/R 229,834
   — 爆発音はステレオ相関が低くM/S変換が逆効果だった)。train_wav_t.cpp で mode3 出力から学習。
+- **iter22 measure: wav 229,834→223,937 (-5,897!!)**。tWav prior は prior横展開で最大の効果。
+  L/R独立モードの残差は定常性が高く prior が強く効く。bwtゲート中。
+- 残りの横展開: **tExe** (train_short_prior.cpp の状態機械再現を拡張、operand バイトのみで
+  観測数は少なめ) と **tText** (64M ハッシュ、TH高めで頻出のみ)。その後 t1/order-N 系も検討可。
+- **iter22 結果: ✅ 採用 -5,897 B (prior横展開で最大)**。本番 bwt: **1,146,305→1,140,408 B**、
+  5/5 SHA一致、ARCR/ARC27。prior シリーズ累計 -9,130 B (yuuki/hal/wav)。

@@ -639,3 +639,7 @@
   密度不足。縦 order-1 単独が勝ち。
 - 派生 **iter11b: left を「left==up」1bit に量子化** — yuukiIdx = (up×2 + (left==up))×512 + c0
   (256×2×512)。「面の内部 vs エッジ」を密度を保って伝える。
+- **iter11b measure: yuuki 51,259→50,988 (-271)**。1bit量子化 (flat=left==up) が正解。bwtゲート中。
+- 派生 **iter11c 候補: 縦連続性bit追加** — vflat=(up2(p-1600)==up) を足して (up×4 + flat×2 + vflat)
+  ×512、256×4×512=524K。「縦に同色が続くか」は up の信頼度をさらに伝える。
+- **iter11b 結果: ✅ 採用 -271 B**。本番 bwt: **1,150,930→1,150,659 B**、5/5 SHA一致、ARCJ/ARC19。

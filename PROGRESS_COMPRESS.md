@@ -276,3 +276,6 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
   yuuki 58,577→51,259 (-7,318!)。**BEST 1,158,248 → 1,150,930 B**。5/5 SHA一致、ARCI/ARC18。
 - 現在のBEST: **1,150,930 B**。内訳 exe 422,362 / wav 230,139 / txt 226,254 / hal 220,804 / yuuki 51,259。
 - 次の一手: iter11 = yuuki 2D order-2 (up×left×c0 直積 33.5M)。
+- iter11 yuuki フル直積 +1,596 失敗 / iter11b flat-bit (left==up) 採用:
+  yuuki 51,259→50,988 (-271)。**BEST 1,150,930 → 1,150,659 B**。5/5 SHA一致、ARCJ/ARC19。
+- 次の一手: iter11c = yuuki 縦連続性bit (up2==up) 追加。

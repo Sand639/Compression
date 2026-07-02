@@ -861,3 +861,7 @@
 - 次: TH緩和最終弾 (yuuki t2→2, yuuki t9s4→3, hal t9s3→4, wav t2→3)。
 - **iter49 結果: ✅ 採用 -1,903 B (measure判定 1/5)**。TH緩和 yuuki t2→2 / t9s4→3 / hal t9s3→4 /
   wav t2→3。payload 1,109,315→1,107,412。ARCs/ARC54。
+- **iter50 結果: ✅ 採用 -155 B (measure判定 2/5)**。TH緩和 text t9s2→12 / wav t9s4→5。
+  payload 1,107,412→1,107,257。ARCt/ARC55。TH緩和はほぼ底。
+- 次: **prior count 調整** — bakeT 系の焼き込み count=7 を 11 へ (priorの信頼期間を延長)。
+  全 prior に一括で効く1パラメータ。

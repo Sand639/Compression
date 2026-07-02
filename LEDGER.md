@@ -825,3 +825,5 @@
 - **iter33 結果: ✅ 採用 -366 B**。t7 prior: text -124 / hal -179 / yuuki -63。
   **bwt フル確認 (5/5回目): 正式 BEST 1,126,542 B、5/5 SHA一致** — 直近5コミット健全。
   ARCc/ARC38。次: t8/t9 prior。
+- **iter34 結果: ✅ 採用 -199 B (measure判定 1/5)**。t8 prior: text -67 / hal -91 / yuuki -41。
+  payload 1,126,430→1,126,231。ARCd/ARC39。次: t9 (order-8テーブルの最終)。

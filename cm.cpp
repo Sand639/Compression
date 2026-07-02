@@ -187,18 +187,20 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 t0(9 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
-                t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.tbits == 29 ? EXE_SIZE : 1, 32768),
-                tText((prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2) ? TEXT_SIZE : 1, 32768),
-                tBmp((prof.tbits == 27 && prof.mixShift == 12 && prof.apmShift == 8 && prof.strideLen == 3) ? (3 * 16 * 512) : 1, 32768),
+                t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
+                tText(prof.fileKind == CMK_TEXT ? TEXT_SIZE : 1, 32768),
+                tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         applyPrior = prof.applyPrior;
-        isYuuki = prof.preset == 1;
-        isExe = prof.tbits == 29;
-        isBmp = prof.tbits == 27 && prof.mixShift == 12 && prof.apmShift == 8 && prof.strideLen == 3;
-        isWav = prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 7 && prof.strideLen == 4;
-        isText = prof.tbits == 27 && prof.mixShift == 11 && prof.apmShift == 8 && prof.strideLen == 2;
+        isYuuki = prof.fileKind == CMK_YUUKI;
+        isExe = prof.fileKind == CMK_EXE;
+        isBmp = prof.fileKind == CMK_HAL;
+        // 歴史的経緯: YUUKI は WAV と同パラメータだったため旧判定で isWav=true。真理値を維持する
+        // (実効は applyPrior=false と predict() の isYuuki 優先分岐で遮断されており挙動に影響なし)。
+        isWav = prof.fileKind == CMK_WAV || prof.fileKind == CMK_YUUKI;
+        isText = prof.fileKind == CMK_TEXT;
         if (isBmp) {
             for (int phase = 0; phase < 3; ++phase)
                 for (int prefix = 1; prefix < 256; ++prefix)

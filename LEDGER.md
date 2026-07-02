@@ -522,3 +522,10 @@
   5/5 SHA一致、self-test PASS。ARCF/ARC15。
 - 学び: rel32系(class1-7)に比べ rel8 は1バイトしかなく偏りも小さいので効果は小さめ。
   prior の寄与と文脈の寄与は未分離(次に prior 無し版を測れば分離できるが、逓減領域なので保留)。
+
+### 第8セッション iter2: fileKind リファクタ (案L) → ✅ **完了 (スコア不変)**
+- CMProfile の暗黙判定 (tbits/mixShift/apmShift/strideLen の組) を enum CMFileKind
+  (OTHER/TEXT/HAL/EXE/WAV/YUUKI) の明示IDに置換。preset フィールドは fileKind に統合し削除。
+- YUUKI は旧判定で isWav=true だったため真理値を維持 (isWav = WAV || YUUKI)。実効は遮断済み。
+- 検証: measure 5ファイル全数値・SCREEN_TOTAL 1,161,443 が置換前と完全一致。self-test PASS、
+  round-trip ALL OK。ビットストリーム不変なので magic 更新なし (ARC15 のまま)。

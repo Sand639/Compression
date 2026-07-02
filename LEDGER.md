@@ -895,3 +895,7 @@
 - **iter58 結果: ✅ 採用 -6,986 B!! (measure判定 4/5)**。exe w2/w3/w4 prior を 175K (基準内上限)
   に拡大。payload 1,080,824→1,073,838 (107万台)。ARC1/ARC63。
   output.enc 見込み ~1,048.8KB — **1,000KB まで残り 50KB を切った**。
+- **iter59 結果: ✅ 採用 -7,733 B!!**。wf/APM/APM2 prior (5ファイル): exe -4,607 / txt -1,123 /
+  yuuki -881 / hal -658 / wav -464。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,066,217 B (1,041.2KB)、5/5 SHA一致**。ARC2/ARC64。
+  1,000KB まで残り 42.2KB。次: APM3/APM4 prior (同方式の最終テーブル群)。

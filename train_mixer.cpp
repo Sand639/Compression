@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     } else {
         if (!ReadFileFs("data/wagahaiwa_nekodearu.txt", v)) return 1;
     }
-    const int which = (argc > 3) ? std::atoi(argv[3]) : 1;   // 1=w, 2=w2, 3=w3, 4=w4
+    const int which = (argc > 3) ? std::atoi(argv[3]) : 1;   // 1-4=w..w4, 5=wf, 6-9=apm..apm4
     const char* dump = "mixer_dump.bin";
     Encode_CM_DumpState(v, prof, dump);
     FILE* f = std::fopen(dump, "rb");
@@ -35,27 +35,47 @@ int main(int argc, char** argv) {
     std::vector<int> w;
     for (int t = 1; t <= which; ++t) {                        // 目的テーブルまで読み飛ばす
         if (std::fread(&wn, 8, 1, f) != 1) return 1;
+        const int esz = (t <= 5) ? 4 : 2;                     // 1-5: int32, 6-9: uint16
         if (t == which) {
             w.resize(wn);
-            if (std::fread(w.data(), sizeof(int), wn, f) != wn) return 1;
+            if (esz == 4) {
+                if (std::fread(w.data(), 4, wn, f) != wn) return 1;
+            } else {
+                std::vector<uint16_t> tmp(wn);
+                if (std::fread(tmp.data(), 2, wn, f) != wn) return 1;
+                for (uint64_t i = 0; i < wn; ++i) w[i] = tmp[i];
+            }
         } else {
-            _fseeki64(f, static_cast<long long>(wn) * 4, SEEK_CUR);
+            _fseeki64(f, static_cast<long long>(wn) * esz, SEEK_CUR);
         }
     }
     std::fclose(f);
-    // 初期値 1<<14 との差の絶対値で降順ソートし上位 maxN を出力
+    // APM (6-9) の初期値は initv[j] = CM_squash((j-32)*64)*16 (j = idx%65)。ミキサーは 1<<14。
+    static const int sqt[33] = {1,2,3,6,10,16,27,45,73,120,194,310,488,747,1101,1546,2047,
+                                2549,2994,3348,3607,3785,3901,3975,4022,4050,4068,4079,4085,4089,4092,4093,4094};
+    auto squash = [&](int d) {
+        if (d > 2047) return 4095;
+        if (d < -2047) return 0;
+        int wq = d & 127; d = (d >> 7) + 16;
+        return (sqt[d] * (128 - wq) + sqt[d + 1] * wq + 64) >> 7;
+    };
+    int initv[65];
+    for (int j = 0; j < 65; ++j) initv[j] = squash((j - 32) * 64) * 16;
+    // 初期値との差の絶対値で降順ソートし上位 maxN を出力
     std::vector<std::pair<long, uint32_t>> diffs;
     diffs.reserve(wn);
     for (uint32_t i = 0; i < wn; ++i) {
-        long d = static_cast<long>(w[i]) - (1 << 14);
+        int init = (which <= 5) ? (1 << 14) : initv[i % 65];
+        long d = static_cast<long>(w[i]) - init;
         if (d != 0) diffs.push_back({d < 0 ? -d : d, i});
     }
     std::sort(diffs.begin(), diffs.end(), [](auto& a, auto& b) { return a.first > b.first; });
     if (diffs.size() > maxN) diffs.resize(maxN);
     std::sort(diffs.begin(), diffs.end(), [](auto& a, auto& b) { return a.second < b.second; });
-    std::printf("// mixer w%d prior %s: %zu entries (maxN=%zu, size=%llu). 上位32bit=idx, 下位32bit=int32重み\n",
-                which, kind.c_str(), diffs.size(), maxN, static_cast<unsigned long long>(wn));
-    std::printf("static const uint64_t W%s_PRIOR_%s[%zu] = {\n", which == 1 ? "" : (which == 2 ? "2" : (which == 3 ? "3" : "4")), kind.c_str(), diffs.size());
+    static const char* names[10] = {"", "W", "W2", "W3", "W4", "WF", "APM", "APM2", "APM3", "APM4"};
+    std::printf("// mixer/apm prior %s_%s: %zu entries (maxN=%zu, size=%llu). 上位32bit=idx, 下位32bit=値\n",
+                names[which], kind.c_str(), diffs.size(), maxN, static_cast<unsigned long long>(wn));
+    std::printf("static const uint64_t %s_PRIOR_%s[%zu] = {\n", names[which], kind.c_str(), diffs.size());
     for (size_t i = 0; i < diffs.size(); ++i) {
         uint64_t e = (static_cast<uint64_t>(diffs[i].second) << 32) | static_cast<uint32_t>(w[diffs[i].second]);
         std::printf("%lluull%s%s", static_cast<unsigned long long>(e), i + 1 < diffs.size() ? "," : "", (i % 8 == 7) ? "\n" : "");

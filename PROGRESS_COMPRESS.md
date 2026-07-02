@@ -108,6 +108,8 @@
 - iter50: TH緩和 text t9s2→12, wav t9s4→5: payload 1,107,412→1,107,257 (-155)。ARCt/ARC55。(measure判定 2/5)
 - iter51: prior count 7→11: payload 1,107,257→1,104,151 (-3,106)。ARCu/ARC56。(measure判定 3/5)
 - iter52: prior count 13→15スイープ: payload 1,104,151→1,103,385 (-766)。ARCw/ARC58。(measure判定 4/5)
+- iter54: 第1ミキサー重み prior (text, 新カテゴリ): payload 1,103,385→1,101,938 (-1,447)。ARCx/ARC59。
+- **bwtフル確認PASS: 正式BEST 1,102,050 B (5/5 SHA一致)**。output.enc更新。
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

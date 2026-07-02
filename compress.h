@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// prior焼き込みcountを13→15に変更しCMストリーム非互換のためARC58へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'w'};  // ARCw = ARC58
+// text の第1ミキサー重み prior (W_PRIOR_TEXT) を追加しCMストリーム非互換のためARC59へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'x'};  // ARCx = ARC59
 
 // ==========================================================================
 // CM プロファイル
@@ -177,6 +177,7 @@ std::vector<uint8_t> Decode_Entropy(const std::vector<uint8_t>& input);
 
 // ---- cm.cpp (コンテキストミキシング) ----
 std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW);
+std::vector<uint8_t> Encode_CM_DumpState(const std::vector<uint8_t>& input, const CMProfile& prof, const char* dumpPath);  // 学習用: w をダンプ
 std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW);
 
 // ---- lzss.cpp ----

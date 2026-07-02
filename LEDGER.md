@@ -876,3 +876,7 @@
   **wav の order-3 以上は LMS 済み残差で無相関 = prior 不成立と確定**。revert。
 - 残る大物候補: ミキサー重み (w, 8192×15, 500KB) / APM2 (532KB) の「1パス後状態」焼き込み。
   bit カウントでは作れず CM 全体を回してダンプする実装が必要 (TRAIN_DUMP モード)。
+- **iter54 結果: ✅ 採用 -1,447 B**。**新カテゴリ: 第1ミキサー重み w の1パス後状態 prior** (text,
+  上位60K件)。Encode_CM_DumpState + train_mixer.cpp を新設。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,102,050 B、5/5 SHA一致**。ARCx/ARC59。
+- 次: ミキサー prior を hal/wav/yuuki/exe へ横展開。

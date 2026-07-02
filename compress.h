@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// yuuki tYuuki に縦連続bit (up2==up) を追加しCMストリーム非互換のためARC20へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'K'};  // ARCK = ARC20
+// yuuki tYuuki に右上bit (p-799==up) を追加しCMストリーム非互換のためARC21へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'L'};  // ARCL = ARC21
 
 // ==========================================================================
 // CM プロファイル

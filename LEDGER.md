@@ -630,3 +630,12 @@
   5/5 SHA一致、self-test PASS。ARCI/ARC18。yuuki は 92.0% 削減に到達。
 - 学び: 生 index 画像の縦 order-1 は劇的に効く。「2D データに縦文脈」は hal (-3,299) と
   yuuki (-7,318) で連勝。st[14] 専用テーブル方式 (tText/tBmp/tYuuki) は密度さえ保てば強い。
+
+### 第8セッション iter11: yuuki 2D order-2 (up×left joint) — 着手 2026-07-02
+- 何を: tYuuki を (up=buf[p-800] × left=buf[p-1] × c0) の直積 256×256×512=33.5M (64MB) に拡大。
+- なぜ: 縦単独 (-7,318) と横 order-1 (t1) が両方効いている以上、その joint は次の情報量。
+  index 画像は同色支配で実効文脈数は名目より遥かに少なく、直積でも密度が保てる見込み。ARC19。
+- **iter11 結果: ❌ 失敗 (+1,596)**。yuuki 51,259→52,855。フル直積 (65,536組) は index 画像でも
+  密度不足。縦 order-1 単独が勝ち。
+- 派生 **iter11b: left を「left==up」1bit に量子化** — yuukiIdx = (up×2 + (left==up))×512 + c0
+  (256×2×512)。「面の内部 vs エッジ」を密度を保って伝える。

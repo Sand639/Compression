@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// hal.bmp 縦方向残差bucket (upMag) を tBmp 文脈に追加しCMストリーム非互換のためARC17へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'H'};  // ARCH = ARC17
+// yuuki 縦order-1文脈 (tYuuki, st[14]兼用) 追加でCMストリーム非互換のためARC18へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'I'};  // ARCI = ARC18
 
 // ==========================================================================
 // CM プロファイル

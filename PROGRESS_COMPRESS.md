@@ -271,3 +271,8 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
   hal 224,103→220,804 (-3,299)。**BEST 1,161,547 → 1,158,248 B**。5/5 SHA一致、ARCH/ARC17。
 - 次の一手: iter9 = hal prevResMag を左隣同チャンネル(p-3)に変更/追加の比較。
   iter10 = yuuki 縦文脈 (p-800, st[14]空き)。
+- iter9 hal p-3置換 +1,248 / iter9b hal 4次元 +125 — 失敗・revert済 (hal tBmp は3次元が最適と確定)。
+- iter10: yuuki 縦order-1 (tYuuki: buf[p-800]×c0, 行800B決め打ち, st[14]兼用):
+  yuuki 58,577→51,259 (-7,318!)。**BEST 1,158,248 → 1,150,930 B**。5/5 SHA一致、ARCI/ARC18。
+- 現在のBEST: **1,150,930 B**。内訳 exe 422,362 / wav 230,139 / txt 226,254 / hal 220,804 / yuuki 51,259。
+- 次の一手: iter11 = yuuki 2D order-2 (up×left×c0 直積 33.5M)。

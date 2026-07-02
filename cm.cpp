@@ -143,6 +143,7 @@ struct CMModel {
     std::vector<uint16_t> tExe;                    // x86 opcode + operand byte position (FAST蟆ら畑)
     std::vector<uint16_t> tText;                   // Shift-JIS讒矩繝ｻ譁・ｭ励け繝ｩ繧ｹ譁・ц (SLOW蟆ら畑)
     std::vector<uint16_t> tBmp;                    // BMP残差 予測難易度文脈 (BMP_CM専用, st[14]兼用)
+    std::vector<uint16_t> tYuuki;                  // yuuki 縦order-1: 上の行の同位置index (st[14]兼用)
     std::vector<uint32_t> matchTab, matchTab2, matchTab3;
     std::vector<uint8_t> buf;
     std::vector<int> w;                            // mixer 驥阪∩ (mixCtx 譁・ц x NIN)
@@ -167,6 +168,7 @@ struct CMModel {
     bool isText = false, sjisTrail = false;
     int sjisLead = 0, textIdx = 0;
     int bmpIdx = 0, prevResMag = 0;                // BMP残差文脈(st[14]兼用): 直前残差の大きさbucket
+    int yuukiIdx = 0;                              // yuuki 縦order-1文脈(st[14]兼用) の現在index
     uint16_t textPrevChar = 0;
     uint32_t textClasses = 0;                      // 逶ｴ霑・繝医・繧ｯ繝ｳ縺ｮ4bit譁・ｭ励け繝ｩ繧ｹ
     int c0 = 1, bitpos = 0, mc = 0, mc_ext = 0;    // mc_ext = mc*8+bitpos (APM1逕ｨ)
@@ -190,6 +192,7 @@ struct CMModel {
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
                 tText(prof.fileKind == CMK_TEXT ? TEXT_SIZE : 1, 32768),
                 tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
+                tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
@@ -419,6 +422,13 @@ struct CMModel {
             int upMag = (p >= 542 + 1800) ? bmpResMag(buf[p - 1800]) : 0;
             bmpIdx = ((phase * 16 + prevResMag) * 16 + upMag) * 512 + c0;
             st[14] = CM_STR.v[tBmp[bmpIdx] >> 4];
+        } else if (isYuuki) {                        // yuuki 縦order-1 (st[14]兼用)
+            // 上の行の同位置 index (yuuki 決め打ち: 800×800 8bit, 行800B, index領域1074..641074)。
+            // 横order-1(t1)はあるが縦の明示文脈が無かった。インデックス画像は縦相関が強い。
+            size_t p = buf.size();
+            int up = (p >= 1074 + 800) ? buf[p - 800] : 0;
+            yuukiIdx = up * 512 + c0;
+            st[14] = CM_STR.v[tYuuki[yuukiIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);
         mc_ext = mc * 8 + bitpos;
@@ -529,6 +539,7 @@ struct CMModel {
         if (exeActive) upd(tExe, idx[13]);
         if (isText) upd(tText, textIdx);
         else if (isBmp) upd(tBmp, bmpIdx);
+        else if (isYuuki) upd(tYuuki, yuukiIdx);
         c0 = (c0 << 1) | bit; ++bitpos;
         if (bitpos == 8) {
             int B = c0 & 0xFF;

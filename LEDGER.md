@@ -848,3 +848,5 @@
 - **iter43 結果: ✅ 採用 -1,455 B**。TH緩和: exe t3 16→12 (-681) / text t2 8→5 (-774)。
   **bwt フル確認 (5/5回目): 正式 BEST 1,113,506 B、5/5 SHA一致**。ARCm/ARC48。
 - 次: TH 緩和続き (exe t4/t9s2 の TH=12 等)。
+- **iter44 結果: ✅ 採用 -923 B (measure判定 1/5)**。TH緩和 exe t4/t9s2 →12。
+  payload 1,113,394→1,112,471。ARCn/ARC49。次: 残りTH緩和一括 (exe t5-t8 / hal t2 / text t3)。

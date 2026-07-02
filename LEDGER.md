@@ -822,3 +822,6 @@
   payload 1,128,063→1,127,309。ARCa/ARC36。次: t6。
 - **iter32 結果: ✅ 採用 -513 B (measure判定 4/5)**。t6 prior: text -239 / hal -191 / yuuki -83。
   payload 1,127,309→1,126,796。ARCb/ARC37。次: t7 (次回フル確認)。
+- **iter33 結果: ✅ 採用 -366 B**。t7 prior: text -124 / hal -179 / yuuki -63。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,126,542 B、5/5 SHA一致** — 直近5コミット健全。
+  ARCc/ARC38。次: t8/t9 prior。

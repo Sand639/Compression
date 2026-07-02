@@ -800,3 +800,6 @@
   measure payload 1,138,155→1,138,068。悪化3ファイルの配列は削除。ARCU/ARC30。
 - 学び: t1 (最頻用文脈) は適応が速く prior 価値が低い。prior が効くのは「文脈空間が広く
   観測が薄い専用テーブル」ほど大きい (tText 64M >> tExe 4M > t1 131K の順に効果減)。
+- **iter26 結果: ✅ 採用 -179 B (measure判定 2/5)**。t2 (order-2) prior wav 用 TH=8 (31K件,
+  248KB<599KB)。payload 1,138,068→1,137,889。ARCV/ARC31。
+- 次: t2 prior の TH=4 確認 (基準内なら) と hal への展開。

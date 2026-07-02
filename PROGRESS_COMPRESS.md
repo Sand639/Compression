@@ -74,6 +74,7 @@
 - iter25: t1 prior (hal/wav のみ、text/exe/yuuki は悪化のため除外): measure payload 1,138,155→1,138,068 (-87)。
   ARCU/ARC30。新ワークフロー (measure判定即コミット、フル確認1/5)。
 - 次の一手: prior 系は一巡。残候補: tText TH緩和 (ユーザー回答待ち)、その他の構造案。
+- iter26: t2 prior wav (TH=8, 31K件): payload 1,138,068→1,137,889 (-179)。ARCV/ARC31。(measure判定 2/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

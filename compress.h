@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// w2/w3/w4 prior を2パス目状態に更新しCMストリーム非互換のためARC66へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '4'};  // ARC4b = ARC66
+// 全ミキサー/APM prior を反復更新しCMストリーム非互換のためARC67へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '5'};  // ARC5b = ARC67
 
 // ==========================================================================
 // CM プロファイル

@@ -296,3 +296,5 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter15 tWav/tBmp rate探索 失敗 / iter16 hal フィルタヒステリシス4%:
   hal 220,804→220,588 (-216)。**BEST 1,149,812 → 1,149,596 B**。magic不変(ARCO)。
 - 次の一手: WAV のブロックM/S・LPC選択にも同様のヒステリシスを試す。
+- iter17: WAV ブロック選択コスト log2 化: wav 229,886→229,834 (-52)。
+  **BEST 1,149,596 → 1,149,544 B**。magic不変。次: iter17b LPCヘッダコスト補正。

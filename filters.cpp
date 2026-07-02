@@ -192,7 +192,8 @@ static long WavLpcAnalyze(const std::vector<uint16_t>& v, size_t lo, size_t hi, 
         int pred = WavLpcPredict(v.data(), i, q, shift);
         uint16_t r = static_cast<uint16_t>(v[i] - static_cast<uint16_t>(pred));
         int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
-        cost += (sv < 0) ? -sv : sv;
+        int a = (sv < 0) ? -sv : sv;
+        cost += static_cast<long>(std::log2(1.0 + a) * 256.0 + 0.5);  // blockCost と同じ log2 次元
     }
     return cost;
 }
@@ -286,7 +287,8 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
     const size_t BS = 4096;                              // フレーム/ブロック (インターリーブ後は4096が最良)
     const size_t numBlocks = (frames + BS - 1) / BS;
 
-    // [lo,hi) ブロックで order の残差絶対値和を計算 (履歴は連続 = 全域参照)
+    // [lo,hi) ブロックで order の残差 log2(1+|res|) コストを計算 (履歴は連続 = 全域参照)。
+    // L1 でなくエントロピー近似 (hal のフィルタ選択 -216 と同じ理屈。符号化後ビット数に比例)。
     auto blockCost = [&](const std::vector<uint16_t>& v, size_t lo, size_t hi, int order) {
         long c = 0;
         for (size_t i = lo; i < hi; ++i) {
@@ -294,7 +296,8 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
             uint16_t p3 = (i >= 3) ? v[i - 3] : 0, p4 = (i >= 4) ? v[i - 4] : 0;
             uint16_t r = static_cast<uint16_t>(v[i] - WavPredict(order, p1, p2, p3, p4));
             int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
-            c += (sv < 0) ? -sv : sv;
+            int a = (sv < 0) ? -sv : sv;
+            c += static_cast<long>(std::log2(1.0 + a) * 256.0 + 0.5);
         }
         return c;
     };

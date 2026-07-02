@@ -854,3 +854,5 @@
   payload 1,112,471→1,111,803。ARCo/ARC50。
 - **iter46 結果: ✅ 採用 -650 B (measure判定 3/5)**。TH緩和 exe t7/t8→12, yuuki/hal t3→3。
   payload 1,111,803→1,111,153。ARCp/ARC51。
+- **iter47 結果: ✅ 採用 -723 B (measure判定 4/5)**。TH緩和 yuuki/hal t4→3, text t4→12。
+  payload 1,111,153→1,110,430。ARCq/ARC52。

@@ -883,3 +883,7 @@
 - **iter55 結果: ✅ 採用 -5,509 B!! (measure判定 1/5)**。ミキサー prior 4ファイル横展開:
   exe -2,581 / hal -1,409 / yuuki -1,250 / wav -269。payload 1,101,938→1,096,429 (109万台)。
   ARCy/ARC60。次: maxN を基準内上限へ拡大 (exe/hal/text 全122K / wav 74K / yuuki 80K)。
+- **iter56 結果: ✅ 採用 -10 B (measure判定 2/5)**。ミキサー prior 全量化 (exe のみ -10)。
+  w (第1ミキサー) は頭打ち。payload 1,096,429→1,096,419。ARCz/ARC61。
+- 次: **サブミキサー w2/w3/w4 (2M文脈×15) の差分上位 prior** — 文脈細分で学習が遅い分、
+  prior の価値が w より大きい可能性。DumpState を拡張。

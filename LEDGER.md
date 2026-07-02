@@ -840,3 +840,4 @@
   ARCh/ARC43。次: exe t4..t8, t9s2。
 - **iter39 結果: ✅ 採用 -938 B (measure判定 1/5)**。t4 prior exe TH=16。payload 1,118,120→1,117,182。ARCi/ARC44。
 - **iter40 結果: ✅ 採用 -577 B (measure判定 2/5)**。t5 prior exe。payload 1,117,182→1,116,605。ARCj/ARC45。
+- **iter41 結果: ✅ 採用 -1,494 B (measure判定 3/5)**。t6+t9s2 prior exe。payload 1,116,605→1,115,111。ARCk/ARC46。

@@ -899,3 +899,7 @@
   yuuki -881 / hal -658 / wav -464。
   **bwt フル確認 (5/5回目): 正式 BEST 1,066,217 B (1,041.2KB)、5/5 SHA一致**。ARC2/ARC64。
   1,000KB まで残り 42.2KB。次: APM3/APM4 prior (同方式の最終テーブル群)。
+- **iter60 結果: ✅ リファクタ完了 (スコア不変)**。cm.cpp 82.86MB→105KB。prior 76配列を
+  prior_data1-3.cpp (各26-31MB, GitHub 50MB警告未満) に分離 (extern リンク)。
+  measure 全数値一致でビットストリーム不変を確認。build_session.cmd 更新。
+  ※ 定義側にも extern 必須 (const はデフォルト internal linkage)。

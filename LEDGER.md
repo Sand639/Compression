@@ -815,3 +815,6 @@
   hal TH=4 (-485) / yuuki TH=4 (-408)。wav TH=8 は +40 悪化のため除外・配列削除。
   payload 1,133,149→1,129,364。ARCY/ARC34。t2+t3 系累計 -8,704。
 - 次: t4 (order-4) prior 展開 (同法則の続き)。
+- **iter30 結果: ✅ 採用 -1,301 B (measure判定 2/5)**。t4 prior: text TH=16 (-988) /
+  hal TH=8 (-103) / yuuki TH=4 (-210)。payload 1,129,364→1,128,063。ARCZ/ARC35。
+- 次: t5 prior。逓減中だがまだ黒字。

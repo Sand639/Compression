@@ -81,6 +81,7 @@
 - **bwtフル確認PASS: 正式BEST 1,133,261 B (5/5 SHA一致)**。output.enc更新。t2系累計 -4,919。
 - 次の一手: t3 (order-3) prior 展開。
 - iter29: t3 prior text/hal/yuuki (wavは+40悪化で除外): payload 1,133,149→1,129,364 (-3,785)。ARCY/ARC34。(measure判定 1/5)
+- iter30: t4 prior text/hal/yuuki: payload 1,129,364→1,128,063 (-1,301)。ARCZ/ARC35。(measure判定 2/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

@@ -880,3 +880,6 @@
   上位60K件)。Encode_CM_DumpState + train_mixer.cpp を新設。
   **bwt フル確認 (5/5回目): 正式 BEST 1,102,050 B、5/5 SHA一致**。ARCx/ARC59。
 - 次: ミキサー prior を hal/wav/yuuki/exe へ横展開。
+- **iter55 結果: ✅ 採用 -5,509 B!! (measure判定 1/5)**。ミキサー prior 4ファイル横展開:
+  exe -2,581 / hal -1,409 / yuuki -1,250 / wav -269。payload 1,101,938→1,096,429 (109万台)。
+  ARCy/ARC60。次: maxN を基準内上限へ拡大 (exe/hal/text 全122K / wav 74K / yuuki 80K)。

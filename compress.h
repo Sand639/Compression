@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// text の第1ミキサー重み prior (W_PRIOR_TEXT) を追加しCMストリーム非互換のためARC59へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'x'};  // ARCx = ARC59
+// 全5ファイルの第1ミキサー重み prior を追加しCMストリーム非互換のためARC60へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'y'};  // ARCy = ARC60
 
 // ==========================================================================
 // CM プロファイル

@@ -110,6 +110,7 @@
 - iter52: prior count 13→15スイープ: payload 1,104,151→1,103,385 (-766)。ARCw/ARC58。(measure判定 4/5)
 - iter54: 第1ミキサー重み prior (text, 新カテゴリ): payload 1,103,385→1,101,938 (-1,447)。ARCx/ARC59。
 - **bwtフル確認PASS: 正式BEST 1,102,050 B (5/5 SHA一致)**。output.enc更新。
+- iter55: ミキサー prior 4ファイル横展開: payload 1,101,938→1,096,429 (-5,509!!)。ARCy/ARC60。(measure判定 1/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

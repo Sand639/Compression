@@ -903,3 +903,8 @@
   prior_data1-3.cpp (各26-31MB, GitHub 50MB警告未満) に分離 (extern リンク)。
   measure 全数値一致でビットストリーム不変を確認。build_session.cmd 更新。
   ※ 定義側にも extern 必須 (const はデフォルト internal linkage)。
+- **iter61 結果: ✅ 採用 -2,250 B (measure判定 1/5)**。APM3/APM4 prior (5ファイル):
+  exe -845 / wav -483 / txt -409 / hal -328 / yuuki -185。payload 1,066,105→1,063,855。
+  ARC3/ARC65。**全テーブル (t0-t9, tX専用, w-w4, wf, apm-apm4) の prior 一巡完了**。
+- 次の一手候補: **自己反復 (2パス目)** — prior 込みの現バイナリで再度 dump→焼き直すと
+  「prior 適用後の学習状態」に収束していく (fixed-point)。効果の大きかった w2/w3/w4 から。

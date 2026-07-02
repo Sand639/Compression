@@ -117,6 +117,7 @@
 - iter59: wf/APM/APM2 prior: payload 1,073,838→1,066,105 (-7,733!!)。ARC2/ARC64。
 - **bwtフル確認PASS: 正式BEST 1,066,217 B ≈1,041KB (5/5 SHA一致)**。output.enc更新。1,000KBまで残り42KB。
 - iter60: prior配列を prior_data1-3.cpp へ分離 (cm.cpp 83MB→105KB, スコア不変)。GitHub 100MB制限対策。
+- iter61: APM3/APM4 prior: payload 1,066,105→1,063,855 (-2,250)。ARC3/ARC65。(measure判定 1/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

@@ -189,6 +189,16 @@ extern const uint64_t APM2_PRIOR_YUUKI[75000];
 extern const uint64_t WF_PRIOR_EXE[256];
 extern const uint64_t APM_PRIOR_EXE[175000];
 extern const uint64_t APM2_PRIOR_EXE[175000];
+extern const uint64_t APM3_PRIOR_TEXT[90000];
+extern const uint64_t APM4_PRIOR_TEXT[90000];
+extern const uint64_t APM3_PRIOR_HAL[85000];
+extern const uint64_t APM4_PRIOR_HAL[85000];
+extern const uint64_t APM3_PRIOR_WAV[70000];
+extern const uint64_t APM4_PRIOR_WAV[70000];
+extern const uint64_t APM3_PRIOR_YUUKI[75000];
+extern const uint64_t APM4_PRIOR_YUUKI[75000];
+extern const uint64_t APM3_PRIOR_EXE[175000];
+extern const uint64_t APM4_PRIOR_EXE[175000];
 extern const uint64_t T9S3_PRIOR_HAL[51091];
 extern const uint64_t T9S4_PRIOR_YUUKI[61690];
 
@@ -562,11 +572,11 @@ struct CMModel {
             auto bakeU = [&](std::vector<uint16_t>& t, const uint64_t* arr, size_t n) {
                 for (size_t i = 0; i < n; ++i) t[arr[i] >> 32] = static_cast<uint16_t>(arr[i] & 0xFFFFu);
             };
-            if (isText) { bakeI(wf, WF_PRIOR_TEXT, std::size(WF_PRIOR_TEXT)); bakeU(apm, APM_PRIOR_TEXT, std::size(APM_PRIOR_TEXT)); bakeU(apm2, APM2_PRIOR_TEXT, std::size(APM2_PRIOR_TEXT)); }
-            else if (isBmp) { bakeI(wf, WF_PRIOR_HAL, std::size(WF_PRIOR_HAL)); bakeU(apm, APM_PRIOR_HAL, std::size(APM_PRIOR_HAL)); bakeU(apm2, APM2_PRIOR_HAL, std::size(APM2_PRIOR_HAL)); }
-            else if (isYuuki) { bakeI(wf, WF_PRIOR_YUUKI, std::size(WF_PRIOR_YUUKI)); bakeU(apm, APM_PRIOR_YUUKI, std::size(APM_PRIOR_YUUKI)); bakeU(apm2, APM2_PRIOR_YUUKI, std::size(APM2_PRIOR_YUUKI)); }
-            else if (isWav && applyPrior) { bakeI(wf, WF_PRIOR_WAV, std::size(WF_PRIOR_WAV)); bakeU(apm, APM_PRIOR_WAV, std::size(APM_PRIOR_WAV)); bakeU(apm2, APM2_PRIOR_WAV, std::size(APM2_PRIOR_WAV)); }
-            else if (isExe) { bakeI(wf, WF_PRIOR_EXE, std::size(WF_PRIOR_EXE)); bakeU(apm, APM_PRIOR_EXE, std::size(APM_PRIOR_EXE)); bakeU(apm2, APM2_PRIOR_EXE, std::size(APM2_PRIOR_EXE)); }
+            if (isText) { bakeI(wf, WF_PRIOR_TEXT, std::size(WF_PRIOR_TEXT)); bakeU(apm, APM_PRIOR_TEXT, std::size(APM_PRIOR_TEXT)); bakeU(apm2, APM2_PRIOR_TEXT, std::size(APM2_PRIOR_TEXT)); bakeU(apm3, APM3_PRIOR_TEXT, std::size(APM3_PRIOR_TEXT)); bakeU(apm4, APM4_PRIOR_TEXT, std::size(APM4_PRIOR_TEXT)); }
+            else if (isBmp) { bakeI(wf, WF_PRIOR_HAL, std::size(WF_PRIOR_HAL)); bakeU(apm, APM_PRIOR_HAL, std::size(APM_PRIOR_HAL)); bakeU(apm2, APM2_PRIOR_HAL, std::size(APM2_PRIOR_HAL)); bakeU(apm3, APM3_PRIOR_HAL, std::size(APM3_PRIOR_HAL)); bakeU(apm4, APM4_PRIOR_HAL, std::size(APM4_PRIOR_HAL)); }
+            else if (isYuuki) { bakeI(wf, WF_PRIOR_YUUKI, std::size(WF_PRIOR_YUUKI)); bakeU(apm, APM_PRIOR_YUUKI, std::size(APM_PRIOR_YUUKI)); bakeU(apm2, APM2_PRIOR_YUUKI, std::size(APM2_PRIOR_YUUKI)); bakeU(apm3, APM3_PRIOR_YUUKI, std::size(APM3_PRIOR_YUUKI)); bakeU(apm4, APM4_PRIOR_YUUKI, std::size(APM4_PRIOR_YUUKI)); }
+            else if (isWav && applyPrior) { bakeI(wf, WF_PRIOR_WAV, std::size(WF_PRIOR_WAV)); bakeU(apm, APM_PRIOR_WAV, std::size(APM_PRIOR_WAV)); bakeU(apm2, APM2_PRIOR_WAV, std::size(APM2_PRIOR_WAV)); bakeU(apm3, APM3_PRIOR_WAV, std::size(APM3_PRIOR_WAV)); bakeU(apm4, APM4_PRIOR_WAV, std::size(APM4_PRIOR_WAV)); }
+            else if (isExe) { bakeI(wf, WF_PRIOR_EXE, std::size(WF_PRIOR_EXE)); bakeU(apm, APM_PRIOR_EXE, std::size(APM_PRIOR_EXE)); bakeU(apm2, APM2_PRIOR_EXE, std::size(APM2_PRIOR_EXE)); bakeU(apm3, APM3_PRIOR_EXE, std::size(APM3_PRIOR_EXE)); bakeU(apm4, APM4_PRIOR_EXE, std::size(APM4_PRIOR_EXE)); }
         }
     }
 

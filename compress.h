@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// t7/t8 に exe の事前学習prior も焼き込みCMストリーム非互換のためARC47へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'l'};  // ARCl = ARC47
+// exe t3 TH=12 / text t2 TH=5 に緩和しCMストリーム非互換のためARC48へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'm'};  // ARCm = ARC48
 
 // ==========================================================================
 // CM プロファイル

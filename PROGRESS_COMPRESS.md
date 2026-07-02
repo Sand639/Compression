@@ -102,6 +102,8 @@
 - iter45: TH緩和 exe t5/t6→12, hal t2→3: payload 1,112,471→1,111,803 (-668)。ARCo/ARC50。(measure判定 2/5)
 - iter46: TH緩和 exe t7/t8→12, yuuki/hal t3→3: payload 1,111,803→1,111,153 (-650)。ARCp/ARC51。(measure判定 3/5)
 - iter47: TH緩和 yuuki/hal t4→3, text t4→12: payload 1,111,153→1,110,430 (-723)。ARCq/ARC52。(measure判定 4/5)
+- iter48: TH緩和 batch5 (t5-t8): payload 1,110,430→1,109,315 (-1,115)。ARCr/ARC53。
+- **bwtフル確認PASS: 正式BEST 1,109,427 B (5/5 SHA一致)**。output.enc更新。
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

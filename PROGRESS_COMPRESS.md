@@ -287,3 +287,5 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter11d 右上bit -279 / iter11e 左上bit +154(失敗・打ち止め) / iter12 wav 同位相order-1 (tWav):
   wav 230,139→229,957 (-182)。**BEST 1,150,154 → 1,149,972 B (115万切り)**。ARCM/ARC22。
 - 次の一手: iter12b = tWav に位相 (p%4) を追加。
+- iter12b: tWav 位相分離: wav 229,957→229,886 (-71)。**BEST 1,149,972 → 1,149,901 B**。ARCN/ARC23。
+- 次の一手: iter12c = p-2 大きさbucket 追加 (案K: M/S残差相関)。

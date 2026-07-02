@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// wav 同位相order-1文脈 (tWav, st[14]兼用) 追加でCMストリーム非互換のためARC22へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'M'};  // ARCM = ARC22
+// wav tWav に位相 (p%4) を追加しCMストリーム非互換のためARC23へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'N'};  // ARCN = ARC23
 
 // ==========================================================================
 // CM プロファイル

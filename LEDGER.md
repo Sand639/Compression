@@ -841,3 +841,7 @@
 - **iter39 結果: ✅ 採用 -938 B (measure判定 1/5)**。t4 prior exe TH=16。payload 1,118,120→1,117,182。ARCi/ARC44。
 - **iter40 結果: ✅ 採用 -577 B (measure判定 2/5)**。t5 prior exe。payload 1,117,182→1,116,605。ARCj/ARC45。
 - **iter41 結果: ✅ 採用 -1,494 B (measure判定 3/5)**。t6+t9s2 prior exe。payload 1,116,605→1,115,111。ARCk/ARC46。
+- **iter42 結果: ✅ 採用 -262 B (measure判定 4/5)**。t7+t8 prior exe。payload 1,115,111→1,114,849。
+  ARCl/ARC47。**exe order 系完了 (t2..t9s2 累計 -10,522)**。
+- 次: TH 緩和ラウンド — 基準内でまだ下げられる玉: exe t3 TH=16→12 (-2,047 実績あり大物) /
+  exe t4 TH=12 / text t2 TH=8→5 など。

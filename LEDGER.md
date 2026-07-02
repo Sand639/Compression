@@ -542,3 +542,21 @@
 - **派生案(次で試す)**: BMP位相/WAV位相/yuuki帯域で3連続成功している「idx[0] o0base 分割」の
   exe 版 — idx[0] = 領域ID×512 + c0。新入力を足さず既存 order-0 を領域分離するだけなので
   冗長性ゼロ・コールドスタント小(5×512=2,560エントリ)。t0 は 9×512 で確保済み(yuuki が9带域)。
+
+### 第8セッション iter4: exe order-0 の PE領域分割 (iter3の派生) — 着手 2026-07-02
+- 何を: idx[0] = peRegion(pos)×512 + c0 で既存 order-0 を5領域に分離 (headers/code/data系/.reloc/.rsrc)。
+  BMP位相/WAV位相/yuuki帯域で3連続成功したパターンの exe 版。新ミキサー入力なし・追加テーブルなし
+  (t0 は 9×512 確保済み)・コールドスタート 2,560 エントリのみ。magic ARC16 (ARCG)。
+
+### 第8セッション iter5 計画: exe ModRM 1バイト文脈 (案B の最小形) — iter4 決着後に着手
+- 何を: 頻出 ModRM 付き opcode (0x8B/0x89/0x8D/0xFF/0x83/0x85/0x33/0x3B/0x03 など) を
+  exeClass=10 として検出し、直後の ModRM 1バイトだけを既存 tExe 位置別モデルで符号化 (remain=1)。
+- なぜ安全か: 過去の失敗 (+32B) は「可変長スキップ」による desync が原因。remain=1 固定なら
+  誤検出してもそのバイトの文脈が変わるだけで、スキップ連鎖が起きない (rel8 class8/9 と同構造)。
+- 拡張余地: 効けば opcode別 ModRM prior (train_short_prior 方式) を追加。reg フィールドは
+  opcode 依存の偏りが強い (Delphi コードは MOV/LEA が支配的)。
+- **iter4 結果: ✅ 採用 -8 B**。exe 422,370→422,362、他不変。本番 bwt: **1,161,555→1,161,547 B**、
+  5/5 SHA一致、self-test PASS。ARCG/ARC16。
+- 学び: order-0 は高次文脈に支配されており、領域分割の効果はごく小さい (-8)。領域情報を
+  活かすなら order-0 以外への注入 (ミキサー選択文脈など) が今後の候補だが、iter3 の教訓どおり
+  独立st入力はNG。優先度は低め。

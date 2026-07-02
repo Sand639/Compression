@@ -296,6 +296,15 @@ struct CMModel {
                 apm3[i * 65 + j] = initv[j];
     }
 
+    // TeraPad.exe の PEセクション境界 (決め打ち。BCJ は長さ保存なので BCJ 後も同一オフセット)。
+    // .reloc/.rsrc(計328KB) は命令列と統計が全く違うため order-0 を領域別に分離する。
+    static int peRegion(size_t p) {
+        if (p < 1024) return 0;                    // DOS/PEヘッダ + セクションテーブル
+        if (p < 1107968) return 1;                 // .text + .itext (コード)
+        if (p < 1134080) return 2;                 // .data + .idata + .rdata
+        if (p < 1206272) return 3;                 // .reloc
+        return 4;                                  // .rsrc
+    }
     static int bmpResMag(int v) {                  // 残差の符号 + 0/255からの距離を量子化 (0..15)
         if (v == 0) return 0;
         int neg = v >= 128;
@@ -318,7 +327,8 @@ struct CMModel {
             o0base = bucket * 512;
         } else if (isBmp) o0base = static_cast<int>(buf.size() % 3) * 512;
         else if (isWav && applyPrior) o0base = static_cast<int>(buf.size() % 4) * 512;
-        idx[0] = o0base + c0; // order0 (BMP/WAV/Yuukiは位相・領域別)
+        else if (isExe) o0base = peRegion(buf.size()) * 512;
+        idx[0] = o0base + c0; // order0 (BMP/WAV/Yuuki/exeは位相・領域別)
         idx[1] = static_cast<int>((cx[1] & 0xFF) * 512 + c0);             // order1
         idx[2] = static_cast<int>(((cx[2] * 0x9E3779B1u) + c0) & TMASK);  // order2
         idx[3] = static_cast<int>(((cx[3] * 0x9E3779B1u) + c0) & TMASK);  // order3

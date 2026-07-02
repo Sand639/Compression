@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// exe短分岐operand文脈と事前確率追加でCMストリーム非互換のためARC15へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'F'};  // ARCF = ARC15
+// exe order-0 の PE領域分割 (peRegion o0base) でCMストリーム非互換のためARC16へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'G'};  // ARCG = ARC16
 
 // ==========================================================================
 // CM プロファイル

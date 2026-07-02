@@ -261,3 +261,7 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - 計測メモ: bwt.exe は対話型のため `run_gate.ps1`(ASCII, cmd stdinリダイレクト方式) で自動化。
   PS 5.1 は BOMなしUTF-8 .ps1 をANSI誤読、PSパイプはBOM付加で入力が壊れる——cmd `<` 方式が確実。
 - 次の一手: fileKind リファクタ(スコア不変, LEDGER案L) → PE領域別文脈(LEDGER案I)。
+- iter3: exe PE領域×order-1 の独立st[14]入力は **+1,341 失敗** (冗長ミキサー入力が学習を乱す)。revert済み。
+- iter4: exe order-0 の PE領域分割 (o0base=peRegion×512): **BEST 1,161,555 → 1,161,547 B (-8)**。
+  5/5 SHA一致、ARCG/ARC16。fileKindリファクタ(スコア不変, 270e9ec)も完了済み。
+- 次の一手: iter5 = exe ModRM 1バイト文脈 (exeClass=10, remain=1固定でdesync回避)。

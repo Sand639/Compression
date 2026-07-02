@@ -850,3 +850,5 @@
 - 次: TH 緩和続き (exe t4/t9s2 の TH=12 等)。
 - **iter44 結果: ✅ 採用 -923 B (measure判定 1/5)**。TH緩和 exe t4/t9s2 →12。
   payload 1,113,394→1,112,471。ARCn/ARC49。次: 残りTH緩和一括 (exe t5-t8 / hal t2 / text t3)。
+- **iter45 結果: ✅ 採用 -668 B (measure判定 2/5)**。TH緩和 exe t5/t6→12 (-328) / hal t2→3 (-340)。
+  payload 1,112,471→1,111,803。ARCo/ARC50。

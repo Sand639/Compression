@@ -807,3 +807,7 @@
   payload 1,137,889→1,137,380。wav t2 prior 累計 -688。次: t2 を hal へ展開。
 - **iter27 結果: ✅ 採用 -662 B (measure判定 4/5)**。t2 prior hal TH=4 (43K件, 347KB 基準内)。
   payload 1,137,380→1,136,718。t2 系累計 -1,350。次: t2 text/exe/yuuki 展開 → 次回フル確認。
+- **iter28 結果: ✅ 採用 -3,569 B (text -2,774 / yuuki -795)**。t2 prior text TH=8 / yuuki TH=4。
+  **bwt フル確認 (5/5回目): data.arc 1,133,261 B、5/5 SHA一致** — measure 予測と完全一致で
+  直近5コミットすべて健全。t2 系累計 -4,919。ARCX/ARC33。
+- 次: t3 (order-3) prior 展開 — 文脈空間がさらに広く「観測薄いほど効く」法則で有望。

@@ -249,3 +249,15 @@ mixerバイアス入力(+592) / LPC次数24・32(係数増) / WAV BS 2048/16384 
 sub-mixer文脈を全プロファイル細粒度化(小ファイル悪化→exe専用に分離して解決) /
 sparse文脈4タップ(+1,841) / BMPカラー変換G->輝度(+3,531) / exe最終mixerにprevByte fmBits(+945) /
 match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,665, bpp=3整列が最適)
+
+## 第8セッション (2026-07-02, Codex→Claude 引き継ぎ)
+- Codex未コミットの **exe 短分岐 operand 文脈** (Jcc rel8 class8 / JMP・LOOP・JECXZ rel8 class9 +
+  EXE_PRIOR_SHORT prior, ARCF/ARC15) を検証し採用。
+- measure: TeraPad.exe **422,511 → 422,370 B (-141)**、他4ファイル不変。SCREEN_TOTAL 1,161,443 B、
+  self-test PASS、round-trip ALL OK。
+- 本番 bwt.exe: **BEST 1,161,696 → 1,161,555 B (-141)**。data.arc 展開で **5/5 SHA-256一致**。output.enc 更新済み。
+- 現在のBEST: **1,161,555 B**。内訳 exe 422,370 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B。
+- **新目標(ユーザー): 1,000KB級**。現在 1,134.3KB、あと約13.9%。
+- 計測メモ: bwt.exe は対話型のため `run_gate.ps1`(ASCII, cmd stdinリダイレクト方式) で自動化。
+  PS 5.1 は BOMなしUTF-8 .ps1 をANSI誤読、PSパイプはBOM付加で入力が壊れる——cmd `<` 方式が確実。
+- 次の一手: fileKind リファクタ(スコア不変, LEDGER案L) → PE領域別文脈(LEDGER案I)。

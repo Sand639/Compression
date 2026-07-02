@@ -90,3 +90,5 @@ data_restored/
 
 # トーナメント生成物 (output.enc が追跡対象の成果物。data.arc はその複製で再生成可)
 data.arc
+# run_gate.ps1 が生成する stdin 入力ファイル (使い捨て)
+gate_in*.txt

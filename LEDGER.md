@@ -491,3 +491,34 @@
 - 第2マッチモデル (ストライド3ハッシュ)
 - WAV/BMP 向け CMModel パラメータ特化
 - コンテキストテーブル TBITS=24 (メモリ制約)
+
+## 第8セッション引き継ぎ (2026-07-02, Codex→Claude)
+- **ユーザーから新目標: output.enc 1,000KB 級を目指す**（現BEST 1,161,696 B ≈ 1,134.5KB。あと約14%）。
+- Codex未コミット変更を発見: **exe 短分岐 operand 文脈** — Jcc rel8 (0x70-0x7F, class8) と
+  JMP/LOOP/JECXZ rel8 (0xEB/0xE0-0xE3, class9) を exeClass に追加し、rel8 1バイトを位置別モデル+
+  EXE_PRIOR_SHORT(train_short_prior.cpp で学習) で符号化。magic ARCE→ARCF (ARC15)。未計測・未記録。
+- 手順: ビルド→measure→bwt 本計測→合否ゲート(可逆5/5 + self-test + <1,161,696)で決着させる。
+
+### 独自案メモ (Claude, 2026-07-02 追記。ユーザー許可: LEDGER外の新案も追記→実行OK)
+- **I. PE構造の領域別文脈 (exe)**: TeraPad.exe の PEヘッダ/セクションテーブルは既知。
+  .text/.rdata/.data/.rsrc のセクション境界オフセットをハードコードし、領域IDを exe 文脈
+  (idx[13]系のhash か 専用st) に混ぜる。import table / resource は命令列と統計が全く違うのに
+  現在同じモデルで混ざっている。期待 -100〜-500 B。
+- **J. rel8/rel32 の分岐距離符号反転統一**: 後方分岐(負のrel)が多い場合、rel8 の符号ビットが
+  偏る。class8/9 の文脈に「直前の分岐が前方/後方」フラグを足す軽量案。期待 -20〜-100 B。
+- **K. wav ステレオ相関の残差二次モデル**: explosion.wav は M/S 選択済みだが、S側残差の
+  大きさが M側残差の大きさと相関する(爆発音の同時性)。M残差bucketをS側の文脈に足す。期待 -50〜-300 B。
+- **L. fileKind リファクタ (スコア不変・開発効率)**: ユーザー指摘(2026-07-02)——決め打ち許可より前の
+  コードは汎用のまま。現在ファイル判定が `isBmp = tbits==27 && mixShift==12 && ...` のような
+  プロファイルパラメータ組の暗黙判定になっていて脆い。CMProfile に明示的な fileKind
+  (EXE/WAV/TXT/HAL/YUUKI/OTHER) を追加して判定を置き換える。ビットストリーム不変・スコア同値を
+  確認してコミット(magic更新不要)。以後の決め打ち実装が楽になる。
+
+### 第8セッション iter1: exe 短分岐 rel8 operand 文脈 (Codex実装をClaude検証) → ✅ **採用 -141 B**
+- Jcc rel8 (0x70-0x7F) を class8、JMP/LOOP/JECXZ rel8 (0xEB/0xE0-0xE3) を class9 として
+  exeClass 検出に追加。rel8 1バイトを位置別モデル + EXE_PRIOR_SHORT(train_short_prior.cpp で
+  BCJ後データから学習した2×256事前確率) で符号化。BCJ は E8/E9 のみ変換するので rel8 は生の相対変位。
+- measure: exe 422,511→422,370 (-141)、他不変。本番 bwt: **1,161,696→1,161,555 B (-141)**、
+  5/5 SHA一致、self-test PASS。ARCF/ARC15。
+- 学び: rel32系(class1-7)に比べ rel8 は1バイトしかなく偏りも小さいので効果は小さめ。
+  prior の寄与と文脈の寄与は未分離(次に prior 無し版を測れば分離できるが、逓減領域なので保留)。

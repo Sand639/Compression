@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// hal.bmp 残差bucketを符号別に分離してCMストリーム非互換のためARC14へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'E'};  // ARCE = ARC14
+// exe短分岐operand文脈と事前確率追加でCMストリーム非互換のためARC15へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'F'};  // ARCF = ARC15
 
 // ==========================================================================
 // CM プロファイル

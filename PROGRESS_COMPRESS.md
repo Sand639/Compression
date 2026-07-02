@@ -120,6 +120,7 @@
 - iter61: APM3/APM4 prior: payload 1,066,105→1,063,855 (-2,250)。ARC3/ARC65。(measure判定 1/5)
 - iter62: **自己反復2パス目 (w2/w3/w4)**: payload 1,063,855→1,050,622 (**-13,233!!!**)。ARC4b/ARC66。(measure判定 2/5)
 - iter63: 全ミキサー/APM prior 反復更新: payload 1,050,622→1,033,069 (**-17,553!!!!**)。ARC5b/ARC67。(measure判定 3/5)
+- iter64: 反復パス2: payload 1,033,069→1,021,479 (**-11,590!!!**)。**output.enc見込み ~997.6KB — 1,000KB(1,024,000B基準)突破!!** ARC6b/ARC68。(measure判定 4/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

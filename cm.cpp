@@ -148,27 +148,27 @@ extern const uint64_t T8_PRIOR_YUUKI[37304];
 extern const uint64_t T9S2_PRIOR_TEXT[43431];
 
 // 第1ミキサー重み w の1パス後状態 prior (text, 上位60000件=480KB<749KB 基準内)。
-extern const uint64_t W_PRIOR_TEXT[67603];
+extern const uint64_t W_PRIOR_TEXT[68341];
 
 // 第1ミキサー重み prior 残り4ファイル (hal 33K / wav 49K / yuuki 60K / exe 60K, 全て基準内)。
-extern const uint64_t W_PRIOR_HAL[33132];
-extern const uint64_t W_PRIOR_WAV[48986];
-extern const uint64_t W_PRIOR_YUUKI[67072];
-extern const uint64_t W_PRIOR_EXE[111403];
+extern const uint64_t W_PRIOR_HAL[33170];
+extern const uint64_t W_PRIOR_WAV[49027];
+extern const uint64_t W_PRIOR_YUUKI[67149];
+extern const uint64_t W_PRIOR_EXE[111422];
 
 // サブミキサー w2/w3/w4 の1パス後状態 prior (5ファイル×3テーブル, 各209-480KB 基準内)。
 extern const uint64_t W2_PRIOR_TEXT[28656];
 extern const uint64_t W3_PRIOR_TEXT[28671];
 extern const uint64_t W4_PRIOR_TEXT[28670];
-extern const uint64_t W2_PRIOR_HAL[26119];
-extern const uint64_t W3_PRIOR_HAL[27769];
-extern const uint64_t W4_PRIOR_HAL[28186];
-extern const uint64_t W2_PRIOR_WAV[26493];
-extern const uint64_t W3_PRIOR_WAV[27404];
-extern const uint64_t W4_PRIOR_WAV[28597];
-extern const uint64_t W2_PRIOR_YUUKI[28440];
+extern const uint64_t W2_PRIOR_HAL[26128];
+extern const uint64_t W3_PRIOR_HAL[27811];
+extern const uint64_t W4_PRIOR_HAL[28223];
+extern const uint64_t W2_PRIOR_WAV[26503];
+extern const uint64_t W3_PRIOR_WAV[27455];
+extern const uint64_t W4_PRIOR_WAV[28600];
+extern const uint64_t W2_PRIOR_YUUKI[28450];
 extern const uint64_t W3_PRIOR_YUUKI[28646];
-extern const uint64_t W4_PRIOR_YUUKI[28665];
+extern const uint64_t W4_PRIOR_YUUKI[28666];
 extern const uint64_t W2_PRIOR_EXE[175000];
 extern const uint64_t W3_PRIOR_EXE[175000];
 extern const uint64_t W4_PRIOR_EXE[175000];
@@ -177,10 +177,10 @@ extern const uint64_t W4_PRIOR_EXE[175000];
 extern const uint64_t WF_PRIOR_TEXT[192];
 extern const uint64_t APM_PRIOR_TEXT[90000];
 extern const uint64_t APM2_PRIOR_TEXT[90000];
-extern const uint64_t WF_PRIOR_HAL[190];
-extern const uint64_t APM_PRIOR_HAL[69939];
+extern const uint64_t WF_PRIOR_HAL[193];
+extern const uint64_t APM_PRIOR_HAL[74507];
 extern const uint64_t APM2_PRIOR_HAL[85000];
-extern const uint64_t WF_PRIOR_WAV[139];
+extern const uint64_t WF_PRIOR_WAV[141];
 extern const uint64_t APM_PRIOR_WAV[70000];
 extern const uint64_t APM2_PRIOR_WAV[70000];
 extern const uint64_t WF_PRIOR_YUUKI[256];

@@ -650,3 +650,12 @@
 - **iter11d 結果: ✅ 採用 -279 B**。右上bit(p-799==up) は vflat(-226) より効いた。
   本番 bwt: **1,150,433→1,150,154 B**、5/5 SHA一致、ARCL/ARC21。
 - **iter11e 計画: 左上bit (p-801==up) 追加**。up 周辺一致bit系はまだ逓減していない。
+- **iter11e 結果: ❌ 失敗 (+154)**。左上bit は flat×vflat から推測可能な冗長情報で密度低下が勝つ。
+  **yuuki tYuuki は (up, flat, vflat, dflat) の4要素で打ち止め確定**。yuuki 累計 58,577→50,483。
+
+### 第8セッション iter12: wav 同位相 order-1 (tWav) — 着手 2026-07-02
+- 何を: explosion.wav (WAV_CM/LEGACY, 4B周期) 用に空いている st[14] へ
+  「1サンプル前の同位相バイト buf[p-4] × c0」の tWav (256×512) を追加。
+- なぜ: yuuki の tYuuki 大当たり (-7,318) の横展開。stride文脈 idx[9] は p-4,-8,-12 の3タップ
+  合成ハッシュで、単独 p-4 直積は新情報。LPC残差にも同位相の残存相関はあるはず。
+- 分岐: st[14] チェーンで isYuuki が先にあるため else if (isWav) で YUUKI は自動除外。ARC23。

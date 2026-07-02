@@ -192,7 +192,7 @@ struct CMModel {
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
                 tText(prof.fileKind == CMK_TEXT ? TEXT_SIZE : 1, 32768),
                 tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
-                tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 512) : 1, 32768),
+                tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
@@ -429,7 +429,8 @@ struct CMModel {
             size_t p = buf.size();
             int up = (p >= 1074 + 800) ? buf[p - 800] : 0;
             int flat = (p >= 1 && buf[p - 1] == up) ? 1 : 0;
-            yuukiIdx = (up * 2 + flat) * 512 + c0;
+            int vflat = (p >= 1074 + 1600 && buf[p - 1600] == up) ? 1 : 0;  // 縦に同色が続くか
+            yuukiIdx = ((up * 2 + flat) * 2 + vflat) * 512 + c0;
             st[14] = CM_STR.v[tYuuki[yuukiIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);

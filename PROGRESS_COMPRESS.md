@@ -279,3 +279,6 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter11 yuuki フル直積 +1,596 失敗 / iter11b flat-bit (left==up) 採用:
   yuuki 51,259→50,988 (-271)。**BEST 1,150,930 → 1,150,659 B**。5/5 SHA一致、ARCJ/ARC19。
 - 次の一手: iter11c = yuuki 縦連続性bit (up2==up) 追加。
+- iter11c: yuuki 縦連続bit (up2==up): yuuki 50,988→50,762 (-226)。
+  **BEST 1,150,659 → 1,150,433 B**。5/5 SHA一致、ARCK/ARC20。
+- 次の一手: iter11d = yuuki 対角bit (p-801/p-799)。

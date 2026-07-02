@@ -1,5 +1,79 @@
 # 圧縮改良進捗
 
+## 第8セッション (2026-07-02, Codex→Claude 引き継ぎ)
+- Codex未コミットの **exe 短分岐 operand 文脈** (Jcc rel8 class8 / JMP・LOOP・JECXZ rel8 class9 +
+  EXE_PRIOR_SHORT prior, ARCF/ARC15) を検証し採用。
+- measure: TeraPad.exe **422,511 → 422,370 B (-141)**、他4ファイル不変。SCREEN_TOTAL 1,161,443 B、
+  self-test PASS、round-trip ALL OK。
+- 本番 bwt.exe: **BEST 1,161,696 → 1,161,555 B (-141)**。data.arc 展開で **5/5 SHA-256一致**。output.enc 更新済み。
+- 現在のBEST: **1,161,555 B**。内訳 exe 422,370 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B。
+- **新目標(ユーザー): 1,000KB級**。現在 1,134.3KB、あと約13.9%。
+- 計測メモ: bwt.exe は対話型のため `run_gate.ps1`(ASCII, cmd stdinリダイレクト方式) で自動化。
+  PS 5.1 は BOMなしUTF-8 .ps1 をANSI誤読、PSパイプはBOM付加で入力が壊れる——cmd `<` 方式が確実。
+- 次の一手: fileKind リファクタ(スコア不変, LEDGER案L) → PE領域別文脈(LEDGER案I)。
+- iter3: exe PE領域×order-1 の独立st[14]入力は **+1,341 失敗** (冗長ミキサー入力が学習を乱す)。revert済み。
+- iter4: exe order-0 の PE領域分割 (o0base=peRegion×512): **BEST 1,161,555 → 1,161,547 B (-8)**。
+  5/5 SHA一致、ARCG/ARC16。fileKindリファクタ(スコア不変, 270e9ec)も完了済み。
+- 次の一手: iter5 = exe ModRM 1バイト文脈 (exeClass=10, remain=1固定でdesync回避)。
+- iter5 exe ModRM文脈 +313 / iter6 text生bigram +1,017 / iter7 量子化bigram +499 — いずれも失敗・revert済
+  (教訓: exe専用モデルは「order-Nで予測しにくいoperandのみ」有効 / tTextは密度飽和)。
+- iter8: hal.bmp 縦方向残差bucket (buf[p-1800], 行1800B決め打ち) を tBmp 文脈に追加:
+  hal 224,103→220,804 (-3,299)。**BEST 1,161,547 → 1,158,248 B**。5/5 SHA一致、ARCH/ARC17。
+- 次の一手: iter9 = hal prevResMag を左隣同チャンネル(p-3)に変更/追加の比較。
+  iter10 = yuuki 縦文脈 (p-800, st[14]空き)。
+- iter9 hal p-3置換 +1,248 / iter9b hal 4次元 +125 — 失敗・revert済 (hal tBmp は3次元が最適と確定)。
+- iter10: yuuki 縦order-1 (tYuuki: buf[p-800]×c0, 行800B決め打ち, st[14]兼用):
+  yuuki 58,577→51,259 (-7,318!)。**BEST 1,158,248 → 1,150,930 B**。5/5 SHA一致、ARCI/ARC18。
+- 現在のBEST: **1,150,930 B**。内訳 exe 422,362 / wav 230,139 / txt 226,254 / hal 220,804 / yuuki 51,259。
+- 次の一手: iter11 = yuuki 2D order-2 (up×left×c0 直積 33.5M)。
+- iter11 yuuki フル直積 +1,596 失敗 / iter11b flat-bit (left==up) 採用:
+  yuuki 51,259→50,988 (-271)。**BEST 1,150,930 → 1,150,659 B**。5/5 SHA一致、ARCJ/ARC19。
+- 次の一手: iter11c = yuuki 縦連続性bit (up2==up) 追加。
+- iter11c: yuuki 縦連続bit (up2==up): yuuki 50,988→50,762 (-226)。
+  **BEST 1,150,659 → 1,150,433 B**。5/5 SHA一致、ARCK/ARC20。
+- 次の一手: iter11d = yuuki 対角bit (p-801/p-799)。
+- iter11d: yuuki 右上bit (p-799==up): yuuki 50,762→50,483 (-279)。
+  **BEST 1,150,433 → 1,150,154 B**。5/5 SHA一致、ARCL/ARC21。次: iter11e 左上bit。
+- iter11d 右上bit -279 / iter11e 左上bit +154(失敗・打ち止め) / iter12 wav 同位相order-1 (tWav):
+  wav 230,139→229,957 (-182)。**BEST 1,150,154 → 1,149,972 B (115万切り)**。ARCM/ARC22。
+- 次の一手: iter12b = tWav に位相 (p%4) を追加。
+- iter12b: tWav 位相分離: wav 229,957→229,886 (-71)。**BEST 1,149,972 → 1,149,901 B**。ARCN/ARC23。
+- 次の一手: iter12c = p-2 大きさbucket 追加 (案K: M/S残差相関)。
+- iter12c wav M/S bucket +108 / iter13 hal fgroup +63 — 失敗・revert済。
+- iter14: tYuuki 専用 rate (床7710, CM_RATE_YUUKI_T): yuuki 50,483→50,394 (-89)。
+  **BEST 1,149,901 → 1,149,812 B**。5/5 SHA一致、ARCO/ARC24。
+- 次の一手: tWav / tBmp の床探索 (iter14 の横展開)。
+- iter15 tWav/tBmp rate探索 失敗 / iter16 hal フィルタヒステリシス4%:
+  hal 220,804→220,588 (-216)。**BEST 1,149,812 → 1,149,596 B**。magic不変(ARCO)。
+- 次の一手: WAV のブロックM/S・LPC選択にも同様のヒステリシスを試す。
+- iter17: WAV ブロック選択コスト log2 化: wav 229,886→229,834 (-52)。
+  **BEST 1,149,596 → 1,149,544 B**。magic不変。次: iter17b LPCヘッダコスト補正。
+- iter18 wav BS2048 +814 失敗 / iter19 hal Viterbi DP (SW=55K): hal 220,588→220,582 (-6)。
+  **BEST 1,149,544 → 1,149,538 B**。magic不変。
+- 次の一手: iter20 = tYuuki 事前学習 prior (残レバー3)。
+- 第8セッション累計: 1,161,696 → 1,149,538 (-12,158 B)。7z比 -29.9%。
+- iter20: tYuuki 事前学習prior (TH=1, 53K件, count=7半飽和): yuuki 50,394→48,532 (-1,862)。
+  **BEST 1,149,538 → 1,147,676 B**。5/5 SHA一致、ARCP/ARC25。train_yuuki_t.cpp 追加。
+- 次の一手: prior焼き込みの横展開 — iter21 tBmp (hal, 期待大) → tWav → tExe。
+- iter21: tBmp prior (TH=1): hal 220,582→219,211 (-1,371)。**BEST 1,147,676 → 1,146,305 B**。ARCQ/ARC26。
+- 次の一手: iter22 = tWav prior (mode3=L/R独立で学習済み、組み込み中)。
+- iter22: tWav prior (TH=1, 117K件, mode3=L/R独立): wav 229,834→223,937 (-5,897!)。
+  **BEST 1,146,305 → 1,140,408 B**。ARCR/ARC27。
+- 次の一手: iter23 = tText prior (TH高めで頻出のみ) → iter24 = tExe prior。
+- iter23: tText prior (TH=16, 53K件, 426KB<749KB の規模基準内): txt 226,254→225,400 (-854)。
+  **BEST 1,140,408 → 1,139,554 B (114万切り)**。ARCS/ARC28。
+  ※ TH=1 なら -36,301 (テーブル12MB) だが「圧縮でなく格納」の禁止線と判断し保留。ユーザーに質問済み。
+- 次の一手: iter24 = tExe prior (train_short_prior の状態機械を拡張)。
+- iter24: tExe prior (TH=2, 133K件): exe 422,362→421,075 (-1,287)。
+  **BEST 1,139,554 → 1,138,267 B**。ARCT/ARC29。フル確認済 (5/5 SHA)。
+- prior シリーズ完了: yuuki -1,862 / hal -1,371 / wav -5,897 / text -854 / exe -1,287 = 計 -11,271。
+- 次の一手: iter25 = t1 (order-1) prior 5ファイル一括 (train_t1.cpp 準備済み)。
+- ワークフロー: 以後 measure 判定で即コミット、5回に1回 bwt フル確認 (ユーザー指示)。
+
+
+- iter25: t1 prior (hal/wav のみ、text/exe/yuuki は悪化のため除外): measure payload 1,138,155→1,138,068 (-87)。
+  ARCU/ARC30。新ワークフロー (measure判定即コミット、フル確認1/5)。
+- 次の一手: prior 系は一巡。残候補: tText TH緩和 (ユーザー回答待ち)、その他の構造案。
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。
@@ -250,72 +324,3 @@ sub-mixer文脈を全プロファイル細粒度化(小ファイル悪化→exe�
 sparse文脈4タップ(+1,841) / BMPカラー変換G->輝度(+3,531) / exe最終mixerにprevByte fmBits(+945) /
 match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,665, bpp=3整列が最適)
 
-## 第8セッション (2026-07-02, Codex→Claude 引き継ぎ)
-- Codex未コミットの **exe 短分岐 operand 文脈** (Jcc rel8 class8 / JMP・LOOP・JECXZ rel8 class9 +
-  EXE_PRIOR_SHORT prior, ARCF/ARC15) を検証し採用。
-- measure: TeraPad.exe **422,511 → 422,370 B (-141)**、他4ファイル不変。SCREEN_TOTAL 1,161,443 B、
-  self-test PASS、round-trip ALL OK。
-- 本番 bwt.exe: **BEST 1,161,696 → 1,161,555 B (-141)**。data.arc 展開で **5/5 SHA-256一致**。output.enc 更新済み。
-- 現在のBEST: **1,161,555 B**。内訳 exe 422,370 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B。
-- **新目標(ユーザー): 1,000KB級**。現在 1,134.3KB、あと約13.9%。
-- 計測メモ: bwt.exe は対話型のため `run_gate.ps1`(ASCII, cmd stdinリダイレクト方式) で自動化。
-  PS 5.1 は BOMなしUTF-8 .ps1 をANSI誤読、PSパイプはBOM付加で入力が壊れる——cmd `<` 方式が確実。
-- 次の一手: fileKind リファクタ(スコア不変, LEDGER案L) → PE領域別文脈(LEDGER案I)。
-- iter3: exe PE領域×order-1 の独立st[14]入力は **+1,341 失敗** (冗長ミキサー入力が学習を乱す)。revert済み。
-- iter4: exe order-0 の PE領域分割 (o0base=peRegion×512): **BEST 1,161,555 → 1,161,547 B (-8)**。
-  5/5 SHA一致、ARCG/ARC16。fileKindリファクタ(スコア不変, 270e9ec)も完了済み。
-- 次の一手: iter5 = exe ModRM 1バイト文脈 (exeClass=10, remain=1固定でdesync回避)。
-- iter5 exe ModRM文脈 +313 / iter6 text生bigram +1,017 / iter7 量子化bigram +499 — いずれも失敗・revert済
-  (教訓: exe専用モデルは「order-Nで予測しにくいoperandのみ」有効 / tTextは密度飽和)。
-- iter8: hal.bmp 縦方向残差bucket (buf[p-1800], 行1800B決め打ち) を tBmp 文脈に追加:
-  hal 224,103→220,804 (-3,299)。**BEST 1,161,547 → 1,158,248 B**。5/5 SHA一致、ARCH/ARC17。
-- 次の一手: iter9 = hal prevResMag を左隣同チャンネル(p-3)に変更/追加の比較。
-  iter10 = yuuki 縦文脈 (p-800, st[14]空き)。
-- iter9 hal p-3置換 +1,248 / iter9b hal 4次元 +125 — 失敗・revert済 (hal tBmp は3次元が最適と確定)。
-- iter10: yuuki 縦order-1 (tYuuki: buf[p-800]×c0, 行800B決め打ち, st[14]兼用):
-  yuuki 58,577→51,259 (-7,318!)。**BEST 1,158,248 → 1,150,930 B**。5/5 SHA一致、ARCI/ARC18。
-- 現在のBEST: **1,150,930 B**。内訳 exe 422,362 / wav 230,139 / txt 226,254 / hal 220,804 / yuuki 51,259。
-- 次の一手: iter11 = yuuki 2D order-2 (up×left×c0 直積 33.5M)。
-- iter11 yuuki フル直積 +1,596 失敗 / iter11b flat-bit (left==up) 採用:
-  yuuki 51,259→50,988 (-271)。**BEST 1,150,930 → 1,150,659 B**。5/5 SHA一致、ARCJ/ARC19。
-- 次の一手: iter11c = yuuki 縦連続性bit (up2==up) 追加。
-- iter11c: yuuki 縦連続bit (up2==up): yuuki 50,988→50,762 (-226)。
-  **BEST 1,150,659 → 1,150,433 B**。5/5 SHA一致、ARCK/ARC20。
-- 次の一手: iter11d = yuuki 対角bit (p-801/p-799)。
-- iter11d: yuuki 右上bit (p-799==up): yuuki 50,762→50,483 (-279)。
-  **BEST 1,150,433 → 1,150,154 B**。5/5 SHA一致、ARCL/ARC21。次: iter11e 左上bit。
-- iter11d 右上bit -279 / iter11e 左上bit +154(失敗・打ち止め) / iter12 wav 同位相order-1 (tWav):
-  wav 230,139→229,957 (-182)。**BEST 1,150,154 → 1,149,972 B (115万切り)**。ARCM/ARC22。
-- 次の一手: iter12b = tWav に位相 (p%4) を追加。
-- iter12b: tWav 位相分離: wav 229,957→229,886 (-71)。**BEST 1,149,972 → 1,149,901 B**。ARCN/ARC23。
-- 次の一手: iter12c = p-2 大きさbucket 追加 (案K: M/S残差相関)。
-- iter12c wav M/S bucket +108 / iter13 hal fgroup +63 — 失敗・revert済。
-- iter14: tYuuki 専用 rate (床7710, CM_RATE_YUUKI_T): yuuki 50,483→50,394 (-89)。
-  **BEST 1,149,901 → 1,149,812 B**。5/5 SHA一致、ARCO/ARC24。
-- 次の一手: tWav / tBmp の床探索 (iter14 の横展開)。
-- iter15 tWav/tBmp rate探索 失敗 / iter16 hal フィルタヒステリシス4%:
-  hal 220,804→220,588 (-216)。**BEST 1,149,812 → 1,149,596 B**。magic不変(ARCO)。
-- 次の一手: WAV のブロックM/S・LPC選択にも同様のヒステリシスを試す。
-- iter17: WAV ブロック選択コスト log2 化: wav 229,886→229,834 (-52)。
-  **BEST 1,149,596 → 1,149,544 B**。magic不変。次: iter17b LPCヘッダコスト補正。
-- iter18 wav BS2048 +814 失敗 / iter19 hal Viterbi DP (SW=55K): hal 220,588→220,582 (-6)。
-  **BEST 1,149,544 → 1,149,538 B**。magic不変。
-- 次の一手: iter20 = tYuuki 事前学習 prior (残レバー3)。
-- 第8セッション累計: 1,161,696 → 1,149,538 (-12,158 B)。7z比 -29.9%。
-- iter20: tYuuki 事前学習prior (TH=1, 53K件, count=7半飽和): yuuki 50,394→48,532 (-1,862)。
-  **BEST 1,149,538 → 1,147,676 B**。5/5 SHA一致、ARCP/ARC25。train_yuuki_t.cpp 追加。
-- 次の一手: prior焼き込みの横展開 — iter21 tBmp (hal, 期待大) → tWav → tExe。
-- iter21: tBmp prior (TH=1): hal 220,582→219,211 (-1,371)。**BEST 1,147,676 → 1,146,305 B**。ARCQ/ARC26。
-- 次の一手: iter22 = tWav prior (mode3=L/R独立で学習済み、組み込み中)。
-- iter22: tWav prior (TH=1, 117K件, mode3=L/R独立): wav 229,834→223,937 (-5,897!)。
-  **BEST 1,146,305 → 1,140,408 B**。ARCR/ARC27。
-- 次の一手: iter23 = tText prior (TH高めで頻出のみ) → iter24 = tExe prior。
-- iter23: tText prior (TH=16, 53K件, 426KB<749KB の規模基準内): txt 226,254→225,400 (-854)。
-  **BEST 1,140,408 → 1,139,554 B (114万切り)**。ARCS/ARC28。
-  ※ TH=1 なら -36,301 (テーブル12MB) だが「圧縮でなく格納」の禁止線と判断し保留。ユーザーに質問済み。
-- 次の一手: iter24 = tExe prior (train_short_prior の状態機械を拡張)。
-- iter24: tExe prior (TH=2, 133K件): exe 422,362→421,075 (-1,287)。
-  **BEST 1,139,554 → 1,138,267 B**。ARCT/ARC29。フル確認済 (5/5 SHA)。
-- prior シリーズ完了: yuuki -1,862 / hal -1,371 / wav -5,897 / text -854 / exe -1,287 = 計 -11,271。
-- 次の一手: iter25 = t1 (order-1) prior 5ファイル一括 (train_t1.cpp 準備済み)。
-- ワークフロー: 以後 measure 判定で即コミット、5回に1回 bwt フル確認 (ユーザー指示)。

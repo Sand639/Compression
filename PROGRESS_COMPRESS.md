@@ -310,3 +310,7 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter22: tWav prior (TH=1, 117K件, mode3=L/R独立): wav 229,834→223,937 (-5,897!)。
   **BEST 1,146,305 → 1,140,408 B**。ARCR/ARC27。
 - 次の一手: iter23 = tText prior (TH高めで頻出のみ) → iter24 = tExe prior。
+- iter23: tText prior (TH=16, 53K件, 426KB<749KB の規模基準内): txt 226,254→225,400 (-854)。
+  **BEST 1,140,408 → 1,139,554 B (114万切り)**。ARCS/ARC28。
+  ※ TH=1 なら -36,301 (テーブル12MB) だが「圧縮でなく格納」の禁止線と判断し保留。ユーザーに質問済み。
+- 次の一手: iter24 = tExe prior (train_short_prior の状態機械を拡張)。

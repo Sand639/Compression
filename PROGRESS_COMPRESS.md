@@ -305,3 +305,5 @@ match信頼度cap63 mult32(+1,395, 短一致を弱め悪化) / hal stride-2(+1,6
 - iter20: tYuuki 事前学習prior (TH=1, 53K件, count=7半飽和): yuuki 50,394→48,532 (-1,862)。
   **BEST 1,149,538 → 1,147,676 B**。5/5 SHA一致、ARCP/ARC25。train_yuuki_t.cpp 追加。
 - 次の一手: prior焼き込みの横展開 — iter21 tBmp (hal, 期待大) → tWav → tExe。
+- iter21: tBmp prior (TH=1): hal 220,582→219,211 (-1,371)。**BEST 1,147,676 → 1,146,305 B**。ARCQ/ARC26。
+- 次の一手: iter22 = tWav prior (mode3=L/R独立で学習済み、組み込み中)。

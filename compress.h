@@ -103,8 +103,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// tYuuki に事前学習prior (YUUKI_TPRIOR) を焼き込みCMストリーム非互換のためARC25へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'P'};  // ARCP = ARC25
+// tBmp に事前学習prior (BMP_TPRIOR) を焼き込みCMストリーム非互換のためARC26へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'Q'};  // ARCQ = ARC26
 
 // ==========================================================================
 // CM プロファイル

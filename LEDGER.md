@@ -830,3 +830,5 @@
 - **iter35 結果: ✅ 採用 -795 B (measure判定 2/5)**。t9 (stride) prior: text s2 -237 /
   hal s3 -317 / yuuki s4 -241。stride は order 系と独立情報のため t7/t8 より効いた。
   payload 1,126,231→1,125,436。ARCe/ARC40。次: wav t9s4 と exe の order 系 prior。
+- **iter36 結果: ✅ 採用 -65 B (measure判定 3/5)**。t9s4 prior wav。payload 1,125,436→1,125,371。
+  ARCf/ARC41。次: exe の order 系 prior (tbits=29, train メモリ 4GB)。

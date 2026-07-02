@@ -832,3 +832,6 @@
   payload 1,126,231→1,125,436。ARCe/ARC40。次: wav t9s4 と exe の order 系 prior。
 - **iter36 結果: ✅ 採用 -65 B (measure判定 3/5)**。t9s4 prior wav。payload 1,125,436→1,125,371。
   ARCf/ARC41。次: exe の order 系 prior (tbits=29, train メモリ 4GB)。
+- **iter37 結果: ✅ 採用 -5,204 B!! (measure判定 4/5)**。t2 prior exe TH=8 (167K件, 1.34MB 基準内)。
+  payload 1,125,371→1,120,167。**exe は order 系 prior の大鉱脈** (コード列は文脈依存が強い)。
+  ARCg/ARC42。次: exe t3..t9s2 展開。

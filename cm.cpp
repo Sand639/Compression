@@ -135,7 +135,7 @@ struct CMModel {
                 tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 2 * 512) : 1, 32768),
                 tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
-                apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(524288 * 65) {
+                apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(2097152 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         applyPrior = prof.applyPrior;
         isYuuki = prof.fileKind == CMK_YUUKI;
@@ -150,7 +150,7 @@ struct CMModel {
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
         for (int i = 0; i < APM2N; ++i)
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
-        for (int i = 0; i < 524288; ++i)
+        for (int i = 0; i < 2097152; ++i)
             for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
         for (int i = 0; i < 16384; ++i)
             for (int j = 0; j < 65; ++j)
@@ -417,7 +417,7 @@ struct CMModel {
             if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         }
         // APM4: prf 繧・cx[4]繝上ャ繧ｷ繝･荳贋ｽ・5bit+match譛臥┌+bitpos 縺ｧ縺輔ｉ縺ｫ陬懈ｭ｣ (65轤ｹ陬憺俣)
-        apm4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 17) * 16 + (matchLen > 0 ? 8 : 0) + bitpos);  // 524288譁・ц
+        apm4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> 15) * 16 + (matchLen > 0 ? 8 : 0) + bitpos);  // 2M文脈 (実験: >>17 から拡大)
         {
             int s4 = CM_STR.v[prf] + 2048;
             apm4Wt = s4 & 63; int j4 = s4 >> 6;

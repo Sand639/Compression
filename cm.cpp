@@ -67,6 +67,7 @@ struct CMModel {
     const int TBITS, TSIZE, TMASK;                  // t2..t9 縺ｮ繧ｵ繧､繧ｺ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
     const int SM;                                   // マッチテーブルサイズ (プロファイル依存: 画像系26, 他24)
     const int APM2SHIFT, APM2N;                     // APM2 文脈シフト/文脈数 (プロファイル依存: text 19, 他23)
+    const size_t WN;                                // sub-mixer 文脈数 = 2^(32-subShift)*8 (subShift 連動)
     static const int EXE_BITS = 24, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
     static const int TEXT_BITS = 28, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;  // 26→28: tText衝突減 (-30B)。29は-1でメモリ増に見合わず
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
@@ -129,6 +130,7 @@ struct CMModel {
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 SM(1 << prof.mbits),
                 APM2SHIFT(prof.apm2Shift), APM2N(1 << (35 - prof.apm2Shift)),
+                WN((1ull << (32 - prof.subShift)) * 8),
                 t0(9 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
@@ -136,7 +138,7 @@ struct CMModel {
                 tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
                 tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 2 * 512) : 1, 32768),
                 tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 16 * 512) : 1, 32768),
-                matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), w5(prof.fileKind == CMK_EXE ? 2097152 * NIN : 1, 1 << 14), wf(64 * NMIX, 16384),
+                matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(WN * NIN, 1 << 14), w3(WN * NIN, 1 << 14), w4(WN * NIN, 1 << 14), w5(prof.fileKind == CMK_EXE ? WN * NIN : 1, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(2097152 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         useW5 = prof.fileKind == CMK_EXE;

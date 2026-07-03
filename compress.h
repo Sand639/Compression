@@ -105,7 +105,7 @@ struct StoredFile {
 };
 
 // isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'N'};  // ARCN = ARC84 (exe専用 order-5 サブミキサー w5)
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'O'};  // ARCO = ARC85 (exe subShift 10 + WN連動テーブル)
 
 // ==========================================================================
 // CM プロファイル
@@ -149,7 +149,7 @@ static const int CM_RATE_YUUKI_T[16] = {  // tYuuki 専用: 非定常index向け
 };  // 床探索: 4096:50,483 / 6000:50,421 / 7710:50,394 / 10082:50,394 (7710-10082が平坦頂点)
 static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 29, true,  CMK_TEXT, 24, 17 };  // テキスト (CM)
 static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 29, true,  CMK_HAL, 29 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 10, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM, subShift 10=文脈32M。12:-18, 10:-22)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 29, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)
 static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 29, false, CMK_WAV };  // WAV_CM だが prior/位相なし
 static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 29, true,  CMK_YUUKI, 29 };     // yuuki_256.bmp 完全一致時のみ (固有prior有効)

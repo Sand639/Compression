@@ -129,6 +129,7 @@
 - **🎉🎉 bwtフル確認PASS: 正式BEST 998,716 B = 975.3KB (5/5 SHA一致) — 1,000,000B の大台突破!!** output.enc更新。
 - iter69: 反復パス7: payload 998,604→995,305 (-3,299)。ARCB2/ARC73。(measure判定 1/5)
 - iter70: 反復パス8: payload 995,305→992,439 (-2,866)。ARCD2/ARC74。(measure判定 2/5)
+- iter71: 反復パス9: payload 992,439→989,743 (-2,696)。ARCE2/ARC75。(measure判定 3/5)
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

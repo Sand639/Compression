@@ -130,6 +130,8 @@
 - iter69: 反復パス7: payload 998,604→995,305 (-3,299)。ARCB2/ARC73。(measure判定 1/5)
 - iter70: 反復パス8: payload 995,305→992,439 (-2,866)。ARCD2/ARC74。(measure判定 2/5)
 - iter71: 反復パス9: payload 992,439→989,743 (-2,696)。ARCE2/ARC75。(measure判定 3/5)
+- 作業1完了: isYuuki BMPヘッダ動的化 (ParseBmpHeaderForCM, ALGO_INDEX_CM追加)。yuuki完全一致・回帰なし。
+- **bwtフル確認PASS: 正式BEST 989,855 B = 966.7KB (5/5 SHA一致)**。output.enc更新。
 ## 第7セッション (2026-07-02, ClaudeCode差分検証 → Codex採用)
 - session-start BEST **1,163,796 B (ARCC)** を確認済み。対象5ファイルのサイズ一致。
 - ClaudeCode差分の `hal.bmp` BMP残差「予測難易度」文脈 (`tBmp`, `st[14]`) を検証し採用。archive magic は **ARCD / ARC13**。

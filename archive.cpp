@@ -48,6 +48,10 @@ std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
             return Encode_CM(BmpSeparateChannels(Encode_Bmp_2DPredict(in)));
         case ALGO_YUUKI_CM:
             return isYuuki() ? Encode_CM(in, CM_PROF_YUUKI) : in;
+        case ALGO_INDEX_CM: {                                  // 8bit インデックスBMP 汎用 (priorなし)
+            bool is8bit = in.size() >= 30 && in[0] == 0x42 && in[1] == 0x4D && in[28] == 8 && in[29] == 0;
+            return is8bit ? Encode_CM(in, CM_PROF_INDEX) : in;
+        }
         default:         return in;
     }
 }
@@ -83,6 +87,8 @@ std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
             return Decode_Bmp_2DPredict(BmpJoinChannels(Decode_CM(in)));
         case ALGO_YUUKI_CM:
             return Decode_CM(in, CM_PROF_YUUKI);
+        case ALGO_INDEX_CM:
+            return Decode_CM(in, CM_PROF_INDEX);
         default:         return in;
     }
 }
@@ -92,7 +98,7 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
     ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
-    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2, ALGO_YUUKI_CM
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2, ALGO_YUUKI_CM, ALGO_INDEX_CM
 };
 
 // ---- コンテナの構築 / 解析 (フォーマット 'ARC4') ----
@@ -170,6 +176,7 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_WAV_CM: return "WAV+CM";
         case ALGO_WAV_CM_LEGACY: return "WAV+CM(leg)";
         case ALGO_YUUKI_CM: return "YuukiIndex+CM";
+        case ALGO_INDEX_CM: return "IndexBMP+CM";
         case ALGO_BMP_CM:  return "BMP+CM";
         case ALGO_BMP_CM2: return "BMP+CM(sep)";
         case ALGO_STORE:  return "Store";

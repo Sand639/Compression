@@ -980,3 +980,14 @@
 - 撤去した場合の正味コスト: **+160,184 B** (output.enc ≈ 1,150,039 B ≈ 1,123KB 相当へ後退)。
 - **コードは未変更のまま** (この監査は測定のみ、測定用 #ifdef も復元済み)。
   対応方針 (全撤去 / 旧小型priorのみ残す 等の線引き) は**ユーザーの判断待ち**。
+
+## 作業1 完了: isYuuki の BMPヘッダ動的読み取り化 (2026-07-03)
+- ParseBmpHeaderForCM 追加 (bfOffBits/biWidth/biHeight(負=top-down)/biBitCount、
+  stride=((w*bc+31)/32)*4 パディング込み)。エンコード/デコード共通の update 経路でパース。
+- リテラル 1074/800/641074/1600/799 を全て動的値 (idxOff/idxStride/idxEnd) に置換。
+  8帯域幅 = stride/8 (端数ガード付き)。
+- CM_PROF_YUUKI (applyPrior=true, yuuki完全一致時のみ固有prior) / CM_PROF_INDEX
+  (applyPrior=false, 8bit BMP汎用・priorなし) + ALGO_INDEX_CM (0x11) を分離。
+  isWav を CMK_WAV のみに整理。ARCG2/ARC77。
+- 検証: yuuki 37,052 完全一致 (回帰なし) / 別8bitBMP (w=99 パディング付) round-trip SHA一致 /
+  **bwt フルゲート PASS: 正式 BEST 989,855 B (966.7KB)、5/5 SHA一致**。

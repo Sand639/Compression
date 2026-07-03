@@ -92,6 +92,7 @@ static const uint8_t ALGO_BMP_CM  = 0x0D;   // BMP(2D 予測フィルタ) 残差
 static const uint8_t ALGO_BMP_CM2 = 0x0E;  // BMP(2D 予測) 残差 + チャンネル分離 -> CM
 static const uint8_t ALGO_WAV_CM_LEGACY = 0x0F; // WAV 残差 -> CM (WAV_PRIOR/4位相なし。yuuki 等の副作用回避用の候補)
 static const uint8_t ALGO_YUUKI_CM = 0x10;       // 800x800 8bit index BMP 専用の列帯域prior + CM
+static const uint8_t ALGO_INDEX_CM = 0x11;       // 8bit インデックスBMP 汎用 (prior なし, ヘッダ動的読取)
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -103,8 +104,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-// 全ミキサー/APM prior を反復更新しCMストリーム非互換のためARC67へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'E'};  // ARCE2 = ARC75
+// isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'G'};  // ARCG2 = ARC77 (isYuuki汎用化+ALGO_INDEX_CM)
 
 // ==========================================================================
 // CM プロファイル
@@ -147,7 +148,8 @@ static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 27, true,  CMK
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 27, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)
 static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 27, false, CMK_WAV };  // WAV_CM だが prior/位相なし
-static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 27, false, CMK_YUUKI };     // raw index BMP専用prior
+static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 27, true,  CMK_YUUKI };     // yuuki_256.bmp 完全一致時のみ (固有prior有効)
+static const CMProfile CM_PROF_INDEX { CM_RATE_WAV, 11, 7, 24, 4, 27, false, CMK_YUUKI };     // 8bit インデックスBMP 汎用 (priorなし・ゼロ初期適応)
 
 // ==========================================================================
 // 各モジュールの公開関数プロトタイプ

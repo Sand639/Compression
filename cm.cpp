@@ -320,6 +320,9 @@ struct CMModel {
     int sjisLead = 0, textIdx = 0;
     int bmpIdx = 0, prevResMag = 0;                // BMP残差文脈(st[14]兼用): 直前残差の大きさbucket
     int yuukiIdx = 0;                              // yuuki 縦order-1文脈(st[14]兼用) の現在index
+    // インデックスBMPのヘッダ動的パース結果 (エンコード/デコードとも buf から同一手順で得る)
+    uint32_t idxOff = 0, idxStride = 0, idxEnd = 0; // データ開始 / 行ストライド / データ終端
+    bool idxParsed = false;
     int wavIdx = 0;                                // wav 同位相order-1文脈(st[14]兼用) の現在index
     uint16_t textPrevChar = 0;
     uint32_t textClasses = 0;                      // 逶ｴ霑・繝医・繧ｯ繝ｳ縺ｮ4bit譁・ｭ励け繝ｩ繧ｹ
@@ -353,9 +356,8 @@ struct CMModel {
         isYuuki = prof.fileKind == CMK_YUUKI;
         isExe = prof.fileKind == CMK_EXE;
         isBmp = prof.fileKind == CMK_HAL;
-        // 歴史的経緯: YUUKI は WAV と同パラメータだったため旧判定で isWav=true。真理値を維持する
-        // (実効は applyPrior=false と predict() の isYuuki 優先分岐で遮断されており挙動に影響なし)。
-        isWav = prof.fileKind == CMK_WAV || prof.fileKind == CMK_YUUKI;
+        // isWav は CMK_WAV のみ (YUUKI の旧互換 true は実効なしのため 2026-07-03 に整理)。
+        isWav = prof.fileKind == CMK_WAV;
         isText = prof.fileKind == CMK_TEXT;
         if (isBmp) {
             for (int phase = 0; phase < 3; ++phase)
@@ -388,7 +390,7 @@ struct CMModel {
                 tText[idx] = static_cast<uint16_t>((p4 << 4) | 15);
             }
         }
-        if (isYuuki) {
+        if (isYuuki && applyPrior) {   // yuuki_256.bmp 固有 prior (完全一致時のみ)
             for (int bucket = 0; bucket < 9; ++bucket)
                 for (int prefix = 1; prefix < 8; ++prefix)
                     t0[bucket * 512 + prefix] = static_cast<uint16_t>((YUUKI_PRIOR3[bucket][prefix] << 4) | 15);
@@ -524,7 +526,7 @@ struct CMModel {
                 for (uint64_t e : W3_PRIOR_TEXT) w3[e >> 32] = static_cast<int>(static_cast<uint32_t>(e));
                 for (uint64_t e : W4_PRIOR_TEXT) w4[e >> 32] = static_cast<int>(static_cast<uint32_t>(e));
             }
-            else if (isYuuki) {
+            else if (isYuuki && applyPrior) {
                 bakeT(t2, T2_PRIOR_YUUKI, std::size(T2_PRIOR_YUUKI));
                 bakeT(t3, T3_PRIOR_YUUKI, std::size(T3_PRIOR_YUUKI));
                 bakeT(t4, T4_PRIOR_YUUKI, std::size(T4_PRIOR_YUUKI));
@@ -574,7 +576,7 @@ struct CMModel {
             };
             if (isText) { bakeI(wf, WF_PRIOR_TEXT, std::size(WF_PRIOR_TEXT)); bakeU(apm, APM_PRIOR_TEXT, std::size(APM_PRIOR_TEXT)); bakeU(apm2, APM2_PRIOR_TEXT, std::size(APM2_PRIOR_TEXT)); bakeU(apm3, APM3_PRIOR_TEXT, std::size(APM3_PRIOR_TEXT)); bakeU(apm4, APM4_PRIOR_TEXT, std::size(APM4_PRIOR_TEXT)); }
             else if (isBmp) { bakeI(wf, WF_PRIOR_HAL, std::size(WF_PRIOR_HAL)); bakeU(apm, APM_PRIOR_HAL, std::size(APM_PRIOR_HAL)); bakeU(apm2, APM2_PRIOR_HAL, std::size(APM2_PRIOR_HAL)); bakeU(apm3, APM3_PRIOR_HAL, std::size(APM3_PRIOR_HAL)); bakeU(apm4, APM4_PRIOR_HAL, std::size(APM4_PRIOR_HAL)); }
-            else if (isYuuki) { bakeI(wf, WF_PRIOR_YUUKI, std::size(WF_PRIOR_YUUKI)); bakeU(apm, APM_PRIOR_YUUKI, std::size(APM_PRIOR_YUUKI)); bakeU(apm2, APM2_PRIOR_YUUKI, std::size(APM2_PRIOR_YUUKI)); bakeU(apm3, APM3_PRIOR_YUUKI, std::size(APM3_PRIOR_YUUKI)); bakeU(apm4, APM4_PRIOR_YUUKI, std::size(APM4_PRIOR_YUUKI)); }
+            else if (isYuuki && applyPrior) { bakeI(wf, WF_PRIOR_YUUKI, std::size(WF_PRIOR_YUUKI)); bakeU(apm, APM_PRIOR_YUUKI, std::size(APM_PRIOR_YUUKI)); bakeU(apm2, APM2_PRIOR_YUUKI, std::size(APM2_PRIOR_YUUKI)); bakeU(apm3, APM3_PRIOR_YUUKI, std::size(APM3_PRIOR_YUUKI)); bakeU(apm4, APM4_PRIOR_YUUKI, std::size(APM4_PRIOR_YUUKI)); }
             else if (isWav && applyPrior) { bakeI(wf, WF_PRIOR_WAV, std::size(WF_PRIOR_WAV)); bakeU(apm, APM_PRIOR_WAV, std::size(APM_PRIOR_WAV)); bakeU(apm2, APM2_PRIOR_WAV, std::size(APM2_PRIOR_WAV)); bakeU(apm3, APM3_PRIOR_WAV, std::size(APM3_PRIOR_WAV)); bakeU(apm4, APM4_PRIOR_WAV, std::size(APM4_PRIOR_WAV)); }
             else if (isExe) { bakeI(wf, WF_PRIOR_EXE, std::size(WF_PRIOR_EXE)); bakeU(apm, APM_PRIOR_EXE, std::size(APM_PRIOR_EXE)); bakeU(apm2, APM2_PRIOR_EXE, std::size(APM2_PRIOR_EXE)); bakeU(apm3, APM3_PRIOR_EXE, std::size(APM3_PRIOR_EXE)); bakeU(apm4, APM4_PRIOR_EXE, std::size(APM4_PRIOR_EXE)); }
         }
@@ -582,6 +584,25 @@ struct CMModel {
 
     // TeraPad.exe の PEセクション境界 (決め打ち。BCJ は長さ保存なので BCJ 後も同一オフセット)。
     // .reloc/.rsrc(計328KB) は命令列と統計が全く違うため order-0 を領域別に分離する。
+    // BMPヘッダの動的パース (インデックスBMP汎用化)。エンコード・デコードとも復元済みの buf
+    // から同じ手順で読むため対称性が保証される。bfOffBits(10,4LE)=データ開始、biWidth(18,4LE)、
+    // biHeight(22,4LE,符号あり: 負=top-down)、biBitCount(28,2LE)。
+    // 行ストライド = ((width*bitCount+31)/32)*4 (4バイト境界パディング込み)。
+    static bool ParseBmpHeaderForCM(const std::vector<uint8_t>& b,
+                                    uint32_t& off, uint32_t& stride, uint32_t& end) {
+        if (b.size() < 30) return false;
+        if (b[0] != 'B' || b[1] != 'M') return false;
+        uint32_t bfOffBits = GetU32(b.data() + 10);
+        int32_t w = static_cast<int32_t>(GetU32(b.data() + 18));
+        int32_t h = static_cast<int32_t>(GetU32(b.data() + 22));
+        int bitCount = b[28] | (b[29] << 8);
+        if (w <= 0 || h == 0 || bitCount != 8) return false;   // 8bit インデックスカラーのみ対象
+        uint32_t hh = h < 0 ? static_cast<uint32_t>(-h) : static_cast<uint32_t>(h);
+        uint32_t st = ((static_cast<uint32_t>(w) * static_cast<uint32_t>(bitCount) + 31u) / 32u) * 4u;
+        if (st == 0) return false;
+        off = bfOffBits; stride = st; end = bfOffBits + st * hh;
+        return true;
+    }
     static int peRegion(size_t p) {
         if (p < 1024) return 0;                    // DOS/PEヘッダ + セクションテーブル
         if (p < 1107968) return 1;                 // .text + .itext (コード)
@@ -607,7 +628,11 @@ struct CMModel {
         int o0base = 0;
         if (isYuuki) {
             size_t p = buf.size(); int bucket = 0;
-            if (p >= 1074 && p < 641074) bucket = 1 + static_cast<int>(((p - 1074) % 800) / 100);
+            // 列位置を8帯域に分割 (帯域幅 = stride/8。yuuki: 800/8=100 で従来と同値)
+            if (idxParsed && p >= idxOff && p < idxEnd && idxStride >= 8) {
+                bucket = 1 + static_cast<int>(((p - idxOff) % idxStride) / (idxStride / 8));
+                if (bucket > 8) bucket = 8;        // stride が8で割り切れない場合の端数ガード
+            }
             o0base = bucket * 512;
         } else if (isBmp) o0base = static_cast<int>(buf.size() % 3) * 512;
         else if (isWav && applyPrior) o0base = static_cast<int>(buf.size() % 4) * 512;
@@ -703,15 +728,16 @@ struct CMModel {
             int upMag = (p >= 542 + 1800) ? bmpResMag(buf[p - 1800]) : 0;
             bmpIdx = ((phase * 16 + prevResMag) * 16 + upMag) * 512 + c0;
             st[14] = CM_STR.v[tBmp[bmpIdx] >> 4];
-        } else if (isYuuki) {                        // yuuki 縦order-1 + 面/エッジbit (st[14]兼用)
-            // 上の行の同位置 index (yuuki 決め打ち: 800×800 8bit, 行800B, index領域1074..641074)。
-            // left はフル直積だと密度不足 (+1,596) なので「left==up か」の1bitに量子化して足す
-            // (面の内部 vs エッジで up の予測力が大きく変わる)。
+        } else if (isYuuki) {                        // インデックスBMP 縦order-1 + 面/エッジbit (st[14]兼用)
+            // 上の行の同位置 index (行ストライドは BMP ヘッダから動的取得。yuuki では従来の
+            // 800B と同値)。left はフル直積だと密度不足 (+1,596) なので「left==up か」の1bitに
+            // 量子化して足す (面の内部 vs エッジで up の予測力が大きく変わる)。
             size_t p = buf.size();
-            int up = (p >= 1074 + 800) ? buf[p - 800] : 0;
+            const size_t so = idxOff, ss = idxStride;
+            int up = (idxParsed && p >= so + ss) ? buf[p - ss] : 0;
             int flat = (p >= 1 && buf[p - 1] == up) ? 1 : 0;
-            int vflat = (p >= 1074 + 1600 && buf[p - 1600] == up) ? 1 : 0;  // 縦に同色が続くか
-            int dflat = (p >= 1074 + 799 && buf[p - 799] == up) ? 1 : 0;    // 右上==上 (エッジ向き)
+            int vflat = (idxParsed && p >= so + 2 * ss && buf[p - 2 * ss] == up) ? 1 : 0;  // 縦に同色が続くか
+            int dflat = (idxParsed && p >= so + ss - 1 && ss >= 1 && buf[p - (ss - 1)] == up) ? 1 : 0;  // 右上==上
             yuukiIdx = (((up * 2 + flat) * 2 + vflat) * 2 + dflat) * 512 + c0;
             st[14] = CM_STR.v[tYuuki[yuukiIdx] >> 4];
         } else if (isWav) {                          // wav 同位相order-1 (st[14]兼用, YUUKIは上で除外)
@@ -847,6 +873,10 @@ struct CMModel {
         if (bitpos == 8) {
             int B = c0 & 0xFF;
             buf.push_back(static_cast<uint8_t>(B));
+            // インデックスBMPのヘッダを動的パース (30バイト溜まった時点で確定)。
+            // yuuki_256.bmp では off=1074/stride=800/end=641074 が得られ、従来の決め打ちと同値。
+            if (isYuuki && !idxParsed)
+                idxParsed = ParseBmpHeaderForCM(buf, idxOff, idxStride, idxEnd);
             if (isExe) {
                 if (exeRemain > 0) {
                     --exeRemain;

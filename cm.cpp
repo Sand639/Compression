@@ -65,7 +65,7 @@ struct BinaryRangeDecoder {
 struct CMModel {
     static const int NIN = 15;                     // o0..o8,stride3,match x3,x86 operand,SJIS text
     const int TBITS, TSIZE, TMASK;                  // t2..t9 縺ｮ繧ｵ繧､繧ｺ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
-    static const int SM = 1 << 24;
+    const int SM;                                   // マッチテーブルサイズ (プロファイル依存: 画像系26, 他24)
     static const int EXE_BITS = 24, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
     static const int TEXT_BITS = 28, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;  // 26→28: tText衝突減 (-30B)。29は-1でメモリ増に見合わず
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
@@ -124,6 +124,7 @@ struct CMModel {
 
     CMModel(const CMProfile& prof)
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
+                SM(1 << prof.mbits),
                 t0(9 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),

@@ -82,8 +82,10 @@ struct CMModel {
     std::vector<int> w3;                           // 隨ｬ3 mixer 驥阪∩ (order-3 譁・ц x NIN)
     std::vector<int> w4;                           // 隨ｬ4 mixer 驥阪∩ (order-4 譁・ц x NIN)
     std::vector<int> wf;                           // 譛邨・mixer (sub-mixer 繧鍛itpos豈弱↓蟄ｦ鄙貞粋謌・
-    static const int NMIX = 4;
-    int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0};
+    std::vector<int> w5;                           // 第5 mixer 重み (order-5 文脈 x NIN, exe専用)
+    bool useW5 = false;                            // exe のみ (subShift 14 の細かい文脈でのみ有効。他は +36〜+171 悪化)
+    static const int NMIX = 5;
+    int mix2Ctx = 0, mix3Ctx = 0, mix4Ctx = 0, mix5Ctx = 0, fmCtx = 0, fmLogit[NMIX] = {0,0,0,0,0};
     std::vector<uint16_t> apm;                     // 荳谺｡謗ｨ螳・(8192 譁・ц x 65 轤ｹ縲［atch蠑ｷ蠎ｦ莉倥″)
     std::vector<uint16_t> apm2;                    // 莠梧ｬ｡謗ｨ螳・(2048 譁・ц x 65 轤ｹ縲｜itpos莉倥″)
     std::vector<uint16_t> apm3;                    // 荳画ｬ｡謗ｨ螳・(1024 譁・ц x 65 轤ｹ縲…0ﾃ洋atch蠑ｷ蠎ｦ)
@@ -134,9 +136,10 @@ struct CMModel {
                 tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
                 tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 2 * 512) : 1, 32768),
                 tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 16 * 512) : 1, 32768),
-                matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
+                matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), w5(prof.fileKind == CMK_EXE ? 2097152 * NIN : 1, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(2097152 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
+        useW5 = prof.fileKind == CMK_EXE;
         applyPrior = prof.applyPrior;
         isYuuki = prof.fileKind == CMK_YUUKI;
         isExe = prof.fileKind == CMK_EXE;
@@ -376,18 +379,21 @@ struct CMModel {
         mix2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-2 譁・ц
         mix3Ctx = static_cast<int>(((cx[3] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-3 譁・ц
         mix4Ctx = static_cast<int>(((cx[4] * 0x9E3779B1u) >> subShift) * 8 + bitpos);  // order-4 譁・ц
-        long long dot = 0, dot2 = 0, dot3 = 0, dot4 = 0;
+        mix5Ctx = useW5 ? static_cast<int>(((cx[5] * 0x9E3779B1u) >> subShift) * 8 + bitpos) : 0;  // order-5 文脈 (exe専用)
+        long long dot = 0, dot2 = 0, dot3 = 0, dot4 = 0, dot5 = 0;
         for (int i = 0; i < NIN; ++i) {
             dot  += static_cast<long long>(w [mixCtx  * NIN + i]) * st[i];
             dot2 += static_cast<long long>(w2[mix2Ctx * NIN + i]) * st[i];
             dot3 += static_cast<long long>(w3[mix3Ctx * NIN + i]) * st[i];
             dot4 += static_cast<long long>(w4[mix4Ctx * NIN + i]) * st[i];
         }
+        if (useW5) for (int i = 0; i < NIN; ++i) dot5 += static_cast<long long>(w5[mix5Ctx * NIN + i]) * st[i];
         // sub-mixer 蜃ｺ蜉帙ｒ譛邨・mixer 縺・bitpos 豈弱↓蟄ｦ鄙貞粋謌・(2螻､ mixer)
         fmLogit[0] = static_cast<int>(dot >> 16);
         fmLogit[1] = static_cast<int>(dot2 >> 16);
         fmLogit[2] = static_cast<int>(dot3 >> 16);
         fmLogit[3] = static_cast<int>(dot4 >> 16);
+        fmLogit[4] = static_cast<int>(dot5 >> 16);
         fmCtx = bitpos * 8 + ms_apm;                    // bitpos + match蠑ｷ蠎ｦ8谿ｵ髫・縺ｧ sub-mixer 驟榊・繧貞､峨∴繧・
         long long dotF = 0;
         for (int k = 0; k < NMIX; ++k) dotF += static_cast<long long>(wf[fmCtx * NMIX + k]) * fmLogit[k];
@@ -444,6 +450,11 @@ struct CMModel {
             int& wi4 = w4[mix4Ctx * NIN + i];
             wi4 += (st[i] * err) >> mixShift;
             if (wi4 < -(1 << 20)) wi4 = -(1 << 20); else if (wi4 > (1 << 20)) wi4 = (1 << 20);
+        }
+        if (useW5) for (int i = 0; i < NIN; ++i) {
+            int& wi5 = w5[mix5Ctx * NIN + i];
+            wi5 += (st[i] * err) >> mixShift;
+            if (wi5 < -(1 << 20)) wi5 = -(1 << 20); else if (wi5 > (1 << 20)) wi5 = (1 << 20);
         }
         for (int k = 0; k < NMIX; ++k) {            // 譛邨・mixer 譖ｴ譁ｰ
             int& wfk = wf[fmCtx * NMIX + k];

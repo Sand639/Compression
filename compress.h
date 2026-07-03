@@ -105,7 +105,7 @@ struct StoredFile {
 };
 
 // isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'M'};  // ARCM = ARC83 (apm4 2M + tWav order-1.5)
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'N'};  // ARCN = ARC84 (exe専用 order-5 サブミキサー w5)
 
 // ==========================================================================
 // CM プロファイル

@@ -541,10 +541,11 @@ struct CMModel {
                 int cls = 0;
                 if (sjisTrail) {
                     uint16_t ch = static_cast<uint16_t>((sjisLead << 8) | B);
-                    if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // 縺ｲ繧峨′縺ｪ
-                    else if (sjisLead == 0x83) cls = 7;                           // 繧ｫ繧ｿ繧ｫ繝・
-                    else if (sjisLead == 0x81) cls = 8;                           // 蜈ｨ隗定ｨ伜捷
-                    else cls = 9;                                                 // 貍｢蟄励⊇縺・
+                    if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // ひらがな
+                    else if (sjisLead == 0x83) cls = 7;                           // カタカナ
+                    else if (sjisLead == 0x81 && (B == 0x41 || B == 0x42)) cls = 10; // 句読点「、」「。」(文境界マーカー)
+                    else if (sjisLead == 0x81) cls = 8;                           // 全角記号
+                    else cls = 9;                                                 // 漢字ほか
                     textPrevChar = ch;
                     sjisTrail = false; sjisLead = 0;
                 } else if (isLead(B)) {

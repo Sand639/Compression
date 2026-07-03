@@ -105,7 +105,7 @@ struct StoredFile {
 };
 
 // isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'I'};  // ARCI = ARC79 (鍵括弧クラス+TEXT_BITS 28)
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'J'};  // ARCJ = ARC80 (EXE_BITS 24 + 全プロファイル tbits 29)
 
 // ==========================================================================
 // CM プロファイル
@@ -143,13 +143,13 @@ static const int CM_RATE_YUUKI_T[16] = {  // tYuuki 専用: 非定常index向け
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      7710,  7710,  7710,  7710,  7710,  7710, 7710, 7710
 };  // 床探索: 4096:50,483 / 6000:50,421 / 7710:50,394 / 10082:50,394 (7710-10082が平坦頂点)
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 28, true,  CMK_TEXT };  // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 28, true,  CMK_HAL };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 29, true,  CMK_TEXT };  // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 29, true,  CMK_HAL };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 28, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)
-static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 28, false, CMK_WAV };  // WAV_CM だが prior/位相なし
-static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 28, true,  CMK_YUUKI };     // yuuki_256.bmp 完全一致時のみ (固有prior有効)
-static const CMProfile CM_PROF_INDEX { CM_RATE_WAV, 11, 7, 24, 4, 28, false, CMK_YUUKI };     // 8bit インデックスBMP 汎用 (priorなし・ゼロ初期適応)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 29, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)
+static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 29, false, CMK_WAV };  // WAV_CM だが prior/位相なし
+static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 29, true,  CMK_YUUKI };     // yuuki_256.bmp 完全一致時のみ (固有prior有効)
+static const CMProfile CM_PROF_INDEX { CM_RATE_WAV, 11, 7, 24, 4, 29, false, CMK_YUUKI };     // 8bit インデックスBMP 汎用 (priorなし・ゼロ初期適応)
 
 // ==========================================================================
 // 各モジュールの公開関数プロトタイプ

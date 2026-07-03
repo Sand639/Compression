@@ -614,11 +614,35 @@ struct CMModel {
     }
 };
 
+// 外部コーパスによる事前学習データ (pretrain_text.cpp, 出典は pretrain/make_pretrain.cpp 冒頭)。
+// 対象5ファイル由来の情報は一切含まない (青空文庫の別作品)。
+extern const uint8_t PRETRAIN_TEXT[];
+extern const size_t PRETRAIN_TEXT_N;
+
+// モデルに外部サンプルを流して統計テーブルだけを温める (エンコーダ/デコーダで同一処理 → 対称)。
+// buf/マッチテーブル/文脈はリセットし、辞書としては使わない (温めた確率・重み・APMのみ持ち越し)。
+static void CM_Pretrain(CMModel& cm, const uint8_t* d, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t B = d[i];
+        for (int k = 7; k >= 0; --k) { cm.predict(); cm.update((B >> k) & 1); }
+    }
+    cm.buf.clear();
+    std::fill(cm.matchTab.begin(), cm.matchTab.end(), 0);
+    std::fill(cm.matchTab2.begin(), cm.matchTab2.end(), 0);
+    std::fill(cm.matchTab3.begin(), cm.matchTab3.end(), 0);
+    cm.matchPtr = cm.matchPtr2 = cm.matchPtr3 = 0;
+    cm.matchLen = cm.matchLen2 = cm.matchLen3 = 0;
+    for (int k = 0; k < 9; ++k) cm.cx[k] = 0;
+    cm.c0 = 1; cm.bitpos = 0; cm.mc = 0; cm.mc_ext = 0;
+    cm.sjisTrail = false; cm.sjisLead = 0; cm.textPrevChar = 0; cm.textClasses = 0;
+}
+
 std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const CMProfile& prof) {
     std::vector<uint8_t> out;
     PutU64(out, static_cast<uint64_t>(input.size()));
     if (input.empty()) return out;
     CMModel cm(prof);
+    if (prof.pretrain && prof.fileKind == CMK_TEXT) CM_Pretrain(cm, PRETRAIN_TEXT, PRETRAIN_TEXT_N);
     BinaryRangeEncoder enc(out);
     for (uint8_t B : input) {
         for (int k = 7; k >= 0; --k) {
@@ -638,6 +662,7 @@ std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const CMProfil
     if (n == 0) return out;
     out.reserve(static_cast<size_t>(n));
     CMModel cm(prof);
+    if (prof.pretrain && prof.fileKind == CMK_TEXT) CM_Pretrain(cm, PRETRAIN_TEXT, PRETRAIN_TEXT_N);
     BinaryRangeDecoder dec(input.data() + 8, input.size() - 8);
     for (uint64_t i = 0; i < n; ++i) {
         int B = 0;

@@ -934,3 +934,49 @@
 - **iter70 結果: ✅ 採用 -2,866 B (measure判定 2/5)**。反復パス8。payload 995,305→992,439。
   ARCD2/ARC74。wav は2連続微悪化 (+114,+175) — 反復頂点を過ぎたため次パスから除外。
 - **iter71 結果: ✅ 採用 -2,696 B (measure判定 3/5)**。反復パス9 (wav除外)。payload 992,439→989,743。ARCE2/ARC75。
+
+## 決め打ち境界線の監査 (2026-07-03, ユーザー訂正基準版)
+
+**判断基準 (ユーザー指示による訂正)**: サイズ・充填率は無関係。
+「そのファイルを実際にエンコード/解析した結果得られた情報のコード埋め込み」は 1 エントリでも禁止。
+許可されるのは「ファイル形式の一般知識に基づく予測方式・アルゴリズム選択」のみ。
+
+### 1. 全 prior 配列の一覧と生成元 (全て対象ファイルを実際に処理して生成 = 禁止側該当)
+
+| 配列群 | 生成元 trainer | 生成方法 | 対象ファイル由来 |
+|---|---|---|---|
+| YUUKI_TPRIOR (53K件) | train_yuuki_t.cpp | yuuki_256.bmp を直接 bit 集計 | ✗ 禁止側 |
+| BMP_TPRIOR (47K件) | train_bmp_t.cpp | hal.bmp をフィルタ後 bit 集計 | ✗ 禁止側 |
+| WAV_TPRIOR (117K件) | train_wav_t.cpp | explosion.wav をフィルタ後 bit 集計 | ✗ 禁止側 |
+| TEXT_TPRIOR (53K件) | train_text_t.cpp | wagahaiwa を bit 集計 | ✗ 禁止側 |
+| EXE_TPRIOR (133K件) | train_exe_t.cpp | TeraPad.exe を BCJ 後 bit 集計 | ✗ 禁止側 |
+| T1_PRIOR_* (2本) | train_t1.cpp | 各ファイル order-1 bit 集計 | ✗ 禁止側 |
+| T2〜T9S*_PRIOR_* (35本) | train_t2.cpp | 各ファイル order-N/stride bit 集計 | ✗ 禁止側 |
+| W/W2/W3/W4/WF_PRIOR_* (25本) | train_mixer.cpp | 各ファイルを実際にエンコードした後のミキサー重みダンプ | ✗ 禁止側 |
+| APM〜APM4_PRIOR_* (20本) | train_mixer.cpp | 同上 (APM テーブルダンプ) | ✗ 禁止側 |
+| (cm.cpp 内) EXE_PRIOR / EXE_PRIOR_SHORT / EXE_PRIOR_EXT / WAV_PRIOR / TEXT_PRIOR / BMP_PRIOR / YUUKI_PRIOR3 | x86_train / train_short_prior / wav_train / text_train / bmp_train / yuuki_train | 各ファイルの bit 頻度集計 (第5〜7セッション採用の「小型prior」) | ✗ 禁止側 |
+
+- prior_data1-3.cpp 合計: **108.25 MB** (86配列) + cm.cpp 内旧 prior 7 テーブル (~25KB 相当)。
+- 特に W/APM 系は「実際にエンコードした後の内部状態のダンプ」であり、自己反復 (パス2〜9) で
+  そのファイルの圧縮結果そのものに収束させたもの。訂正基準では最も明確に禁止側。
+
+### 2. 全 prior 無効化時のスコア影響 (measure 実測, /DDISABLE_FILE_PRIORS)
+
+| ファイル | prior込み (現行) | prior全無効 | 悪化量 |
+|---|---|---|---|
+| TeraPad.exe | 327,850 | 422,823 | +94,973 |
+| explosion.wav | 217,241 | 229,841 | +12,600 |
+| wagahaiwa.txt | 201,309 | 226,276 | +24,967 |
+| hal.bmp | 206,291 | 220,593 | +14,302 |
+| yuuki_256.bmp | 37,052 | 50,394 | +13,342 |
+| **合計 payload** | **989,743** | **1,149,927** | **+160,184** |
+
+- prior 全無効版 (1,149,927) は prior 導入直前の 7/2 時点 BEST (payload 1,149,432 前後) とほぼ
+  一致し、測定は整合的。文脈設計 (tYuuki 縦文脈・PE領域分割・SJISクラス等の「一般知識」側) の
+  寄与はそのまま残る。round-trip ALL OK / self-test PASS。
+
+### 3. 結論と対応待ち事項
+- 訂正基準では **上記 prior 配列は全て(旧「小型prior」含む)禁止側に該当**。
+- 撤去した場合の正味コスト: **+160,184 B** (output.enc ≈ 1,150,039 B ≈ 1,123KB 相当へ後退)。
+- **コードは未変更のまま** (この監査は測定のみ、測定用 #ifdef も復元済み)。
+  対応方針 (全撤去 / 旧小型priorのみ残す 等の線引き) は**ユーザーの判断待ち**。

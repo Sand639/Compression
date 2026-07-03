@@ -991,3 +991,14 @@
   isWav を CMK_WAV のみに整理。ARCG2/ARC77。
 - 検証: yuuki 37,052 完全一致 (回帰なし) / 別8bitBMP (w=99 パディング付) round-trip SHA一致 /
   **bwt フルゲート PASS: 正式 BEST 989,855 B (966.7KB)、5/5 SHA一致**。
+
+## 2系統分岐 完了 (2026-07-03)
+- **提出物A** `submission-A-specialized` (本ブランチ codex/major-overhaul):
+  prior 焼き込み方式のまま固定。**正式 989,855 B (76.2%削減, 7z比-39.7%)**、
+  フルゲート 5/5 SHA一致。TECHNICAL_NOTE_A.md に手法と限界を開示。
+- **提出物B** `submission-B-generic` (ブランチ generic-model):
+  ファイル由来 prior 全除去 (86配列+旧7テーブル+train群+DumpState)。
+  peRegion=PEヘッダ動的パース / tBmp=フィルタ出力ヘッダ動的計算 / yuuki=BMPヘッダ動的パース
+  に汎用化。**正式 1,150,037 B (72.4%削減, 7z比-29.9%)**、フルゲート 5/5 SHA一致。
+  TECHNICAL_NOTE_B.md / PROGRESS_GENERIC.md 参照。
+- 両ブランチとも build_session.cmd でビルド成功・round-trip 5/5 確認済み。

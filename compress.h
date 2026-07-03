@@ -123,7 +123,9 @@ static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'K'};  // ARCK = ARC81 (画
 enum CMFileKind { CMK_OTHER = 0, CMK_TEXT = 1, CMK_HAL = 2, CMK_EXE = 3, CMK_WAV = 4, CMK_YUUKI = 5 };
 // mbits: マッチテーブルのサイズ指数。画像系のみ 26 (拡大で hal -46 / yuuki -71)。
 //   テキスト/exe は衝突による「近い出現優先」バイアスが有利で 24 のまま (26 で exe +252 / txt +169)。
-struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; bool applyPrior = true; int fileKind = CMK_OTHER; int mbits = 24; };
+// apm2Shift: APM2 文脈 = (order-2ハッシュ >> apm2Shift)*8+bitpos。テキストのみ 19 (65536文脈, txt -40)。
+//   他は 23 (4096) が最適 (19 で exe +45 / wav +21 / hal +14)。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; bool applyPrior = true; int fileKind = CMK_OTHER; int mbits = 24; int apm2Shift = 23; };
 
 static const int CM_RATE_SLOW[16] = {
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
@@ -145,7 +147,7 @@ static const int CM_RATE_YUUKI_T[16] = {  // tYuuki 専用: 非定常index向け
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      7710,  7710,  7710,  7710,  7710,  7710, 7710, 7710
 };  // 床探索: 4096:50,483 / 6000:50,421 / 7710:50,394 / 10082:50,394 (7710-10082が平坦頂点)
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 29, true,  CMK_TEXT };  // テキスト (CM)
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 29, true,  CMK_TEXT, 24, 19 };  // テキスト (CM)
 static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 29, true,  CMK_HAL, 29 };   // 画像 (BMP_CM)
 static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM)
 static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 29, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)

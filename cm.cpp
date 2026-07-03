@@ -66,6 +66,7 @@ struct CMModel {
     static const int NIN = 15;                     // o0..o8,stride3,match x3,x86 operand,SJIS text
     const int TBITS, TSIZE, TMASK;                  // t2..t9 縺ｮ繧ｵ繧､繧ｺ (繝励Ο繝輔ぃ繧､繝ｫ萓晏ｭ・
     const int SM;                                   // マッチテーブルサイズ (プロファイル依存: 画像系26, 他24)
+    const int APM2SHIFT, APM2N;                     // APM2 文脈シフト/文脈数 (プロファイル依存: text 19, 他23)
     static const int EXE_BITS = 24, EXE_SIZE = 1 << EXE_BITS, EXE_MASK = EXE_SIZE - 1;
     static const int TEXT_BITS = 28, TEXT_SIZE = 1 << TEXT_BITS, TEXT_MASK = TEXT_SIZE - 1;  // 26→28: tText衝突減 (-30B)。29は-1でメモリ増に見合わず
     std::vector<uint16_t> t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;  // 繝薙ャ繝育｢ｺ邇・(12bit, 蛻晄悄 2048)
@@ -125,6 +126,7 @@ struct CMModel {
     CMModel(const CMProfile& prof)
               : TBITS(prof.tbits), TSIZE(1 << prof.tbits), TMASK((1 << prof.tbits) - 1),
                 SM(1 << prof.mbits),
+                APM2SHIFT(prof.apm2Shift), APM2N(1 << (35 - prof.apm2Shift)),
                 t0(9 * 512, 32768), t1(256 * 512, 32768), t2(TSIZE, 32768), t3(TSIZE, 32768),
                 t4(TSIZE, 32768), t5(TSIZE, 32768), t6(TSIZE, 32768), t7(TSIZE, 32768),
                 t8(TSIZE, 32768), t9(TSIZE, 32768), tExe(prof.fileKind == CMK_EXE ? EXE_SIZE : 1, 32768),
@@ -133,7 +135,7 @@ struct CMModel {
                 tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 2 * 512) : 1, 32768),
                 tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
-                apm(32768 * 65), apm2(4096 * 65), apm3(32768 * 65), apm4(524288 * 65) {
+                apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(524288 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
         applyPrior = prof.applyPrior;
         isYuuki = prof.fileKind == CMK_YUUKI;
@@ -146,7 +148,7 @@ struct CMModel {
         for (int j = 0; j < 65; ++j) initv[j] = static_cast<uint16_t>(CM_squash((j - 32) * 64) * 16);
         for (int i = 0; i < 32768; ++i)
             for (int j = 0; j < 65; ++j) apm[i * 65 + j] = initv[j];
-        for (int i = 0; i < 4096; ++i)
+        for (int i = 0; i < APM2N; ++i)
             for (int j = 0; j < 65; ++j) apm2[i * 65 + j] = initv[j];
         for (int i = 0; i < 524288; ++i)
             for (int j = 0; j < 65; ++j) apm4[i * 65 + j] = initv[j];
@@ -398,7 +400,7 @@ struct CMModel {
         prf = (pr0 + 3 * ap) >> 2;
         if (prf < 1) prf = 1; else if (prf > 4094) prf = 4094;
         // APM2: prf 繧・2谺｡譁・ц (cx[2]縺ｮ繝上ャ繧ｷ繝･荳贋ｽ・bit+bitpos) 縺ｧ縺輔ｉ縺ｫ陬懈ｭ｣ (65轤ｹ陬憺俣)
-        apm2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> 23) * 8 + bitpos);  // 4096譁・ц (9bit+3bit)
+        apm2Ctx = static_cast<int>(((cx[2] * 0x9E3779B1u) >> APM2SHIFT) * 8 + bitpos);  // プロファイル依存文脈数
         int s2 = CM_STR.v[prf] + 2048;
         apm2Wt = s2 & 63; int j2 = s2 >> 6;
         apm2Idx = apm2Ctx * 65 + j2;

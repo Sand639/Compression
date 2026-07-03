@@ -105,7 +105,7 @@ struct StoredFile {
 };
 
 // isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'H'};  // ARCH = ARC78 (SJIS句読点クラス追加)
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'I'};  // ARCI = ARC79 (鍵括弧クラス+TEXT_BITS 28)
 
 // ==========================================================================
 // CM プロファイル

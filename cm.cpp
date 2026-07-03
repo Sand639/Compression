@@ -133,7 +133,7 @@ struct CMModel {
                 tText(prof.fileKind == CMK_TEXT ? TEXT_SIZE : 1, 32768),
                 tBmp(prof.fileKind == CMK_HAL ? (3 * 16 * 16 * 512) : 1, 32768),
                 tYuuki(prof.fileKind == CMK_YUUKI ? (256 * 2 * 2 * 2 * 512) : 1, 32768),
-                tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 512) : 1, 32768),
+                tWav(prof.fileKind == CMK_WAV ? (4 * 256 * 16 * 512) : 1, 32768),
                 matchTab(SM, 0), matchTab2(SM, 0), matchTab3(SM, 0), w(8192 * NIN, 1 << 14), w2(2097152 * NIN, 1 << 14), w3(2097152 * NIN, 1 << 14), w4(2097152 * NIN, 1 << 14), wf(64 * NMIX, 16384),
                 apm(32768 * 65), apm2(static_cast<size_t>(APM2N) * 65), apm3(32768 * 65), apm4(2097152 * 65) {
         rate = prof.rate; mixShift = prof.mixShift; apmShift = prof.apmShift; subShift = prof.subShift; strideLen = prof.strideLen;
@@ -357,13 +357,14 @@ struct CMModel {
             int dflat = (idxParsed && p >= so + ss - 1 && ss >= 1 && buf[p - (ss - 1)] == up) ? 1 : 0;  // 右上==上
             yuukiIdx = (((up * 2 + flat) * 2 + vflat) * 2 + dflat) * 512 + c0;
             st[14] = CM_STR.v[tYuuki[yuukiIdx] >> 4];
-        } else if (isWav) {                          // wav 同位相order-1 (st[14]兼用, YUUKIは上で除外)
-            // 1サンプル前の同位相バイト (4B周期)。stride文脈 idx[9] は p-4,-8,-12 の3タップ合成
-            // ハッシュなので、単独 p-4 の直積は新情報。yuuki tYuuki (-7,318) の横展開。
+        } else if (isWav) {                          // wav 同位相order-1.5 (st[14]兼用, YUUKIは上で除外)
+            // 1サンプル前の同位相バイト (4B周期) + 2サンプル前の上位nibble (符号+主要振幅)。
+            // stride文脈 idx[9] は p-4,-8,-12 の3タップ合成ハッシュなので、直積は新情報。
             size_t p = buf.size();
             int prev = (p >= 4) ? buf[p - 4] : 0;
+            int prev2hi = (p >= 8) ? (buf[p - 8] >> 4) : 0;  // フルバイトは+10悪化、nibbleが頂点
             int phase = static_cast<int>(p % 4);   // M下位/M上位/S下位/S上位 で prev の意味が違う
-            wavIdx = (phase * 256 + prev) * 512 + c0;
+            wavIdx = ((phase * 256 + prev) * 16 + prev2hi) * 512 + c0;
             st[14] = CM_STR.v[tWav[wavIdx] >> 4];
         }
         mc = static_cast<int>(cx[1] & 0xFF);

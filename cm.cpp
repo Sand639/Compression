@@ -544,6 +544,7 @@ struct CMModel {
                     if (sjisLead == 0x82 && B >= 0x9F && B <= 0xF1) cls = 6;      // ひらがな
                     else if (sjisLead == 0x83) cls = 7;                           // カタカナ
                     else if (sjisLead == 0x81 && (B == 0x41 || B == 0x42)) cls = 10; // 句読点「、」「。」(文境界マーカー)
+                    else if (sjisLead == 0x81 && (B == 0x75 || B == 0x76)) cls = 11; // 鍵括弧「」(会話境界マーカー)
                     else if (sjisLead == 0x81) cls = 8;                           // 全角記号
                     else cls = 9;                                                 // 漢字ほか
                     textPrevChar = ch;

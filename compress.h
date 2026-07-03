@@ -179,7 +179,6 @@ std::vector<uint8_t> Decode_Entropy(const std::vector<uint8_t>& input);
 
 // ---- cm.cpp (コンテキストミキシング) ----
 std::vector<uint8_t> Encode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW);
-std::vector<uint8_t> Encode_CM_DumpState(const std::vector<uint8_t>& input, const CMProfile& prof, const char* dumpPath);  // 学習用: w をダンプ
 std::vector<uint8_t> Decode_CM(const std::vector<uint8_t>& input, const CMProfile& prof = CM_PROF_SLOW);
 
 // ---- lzss.cpp ----

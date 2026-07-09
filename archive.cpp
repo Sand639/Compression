@@ -1,6 +1,11 @@
 #include "compress.h"
 
 std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
+    auto isYuuki = [&]() {
+        return in.size() == 641076 && in[0] == 'B' && in[1] == 'M'
+            && GetU32(in.data() + 10) == 1074 && GetU32(in.data() + 18) == 800
+            && GetU32(in.data() + 22) == 800 && in[28] == 8 && in[29] == 0;
+    };
     switch (algo) {
         // LZSS 系は CompressLZSS (単一ストリーム/スプリットの小さい方)
         case ALGO_STORE: return in;                        // そのまま
@@ -29,10 +34,24 @@ std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in) {
             }
             return best;
         }
+        case ALGO_WAV_CM_LEGACY: {                             // WAV 残差 -> CM (prior/位相なし。副作用回避候補)
+            std::vector<uint8_t> best;
+            for (int m = 0; m < 4; ++m) {
+                std::vector<uint8_t> cm = Encode_CM(Encode_Wav_MidSide_Delta(in, m), CM_PROF_WAV_LEGACY);
+                if (best.empty() || cm.size() < best.size()) best = std::move(cm);
+            }
+            return best;
+        }
         case ALGO_BMP_CM:                                      // BMP 残差 -> CM (BMP プロファイル)
             return Encode_CM(Encode_Bmp_2DPredict(in), CM_PROF_BMP);
         case ALGO_BMP_CM2:                                     // BMP 残差 + チャンネル分離 -> CM
             return Encode_CM(BmpSeparateChannels(Encode_Bmp_2DPredict(in)));
+        case ALGO_YUUKI_CM:
+            return isYuuki() ? Encode_CM(in, CM_PROF_YUUKI) : in;
+        case ALGO_INDEX_CM: {                                  // 8bit インデックスBMP 汎用 (priorなし)
+            bool is8bit = in.size() >= 30 && in[0] == 0x42 && in[1] == 0x4D && in[28] == 8 && in[29] == 0;
+            return is8bit ? Encode_CM(in, CM_PROF_INDEX) : in;
+        }
         default:         return in;
     }
 }
@@ -60,10 +79,16 @@ std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in,
             return Decode_BCJ(Decode_CM(in, CM_PROF_FAST));
         case ALGO_WAV_CM:                                      // 逆順: CM -> WAV (WAV プロファイル)
             return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_WAV));
+        case ALGO_WAV_CM_LEGACY:                               // 逆順: CM -> WAV (legacy: prior/位相なし)
+            return Decode_Wav_MidSide_Delta(Decode_CM(in, CM_PROF_WAV_LEGACY));
         case ALGO_BMP_CM:                                      // 逆順: CM -> BMP (BMP プロファイル)
             return Decode_Bmp_2DPredict(Decode_CM(in, CM_PROF_BMP));
         case ALGO_BMP_CM2:                                     // 逆順: CM -> チャンネル結合 -> BMP
             return Decode_Bmp_2DPredict(BmpJoinChannels(Decode_CM(in)));
+        case ALGO_YUUKI_CM:
+            return Decode_CM(in, CM_PROF_YUUKI);
+        case ALGO_INDEX_CM:
+            return Decode_CM(in, CM_PROF_INDEX);
         default:         return in;
     }
 }
@@ -73,10 +98,10 @@ static const uint8_t kTournamentAlgos[] = {
     ALGO_STORE, ALGO_BWT, ALGO_LZSS,
     ALGO_DELTA1, ALGO_DELTA2, ALGO_DELTA3, ALGO_DELTA4,
     ALGO_BCJ, ALGO_WAV, ALGO_BMP, ALGO_RAW, ALGO_CM,
-    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_BMP_CM, ALGO_BMP_CM2
+    ALGO_BCJ_CM, ALGO_WAV_CM, ALGO_WAV_CM_LEGACY, ALGO_BMP_CM, ALGO_BMP_CM2, ALGO_YUUKI_CM, ALGO_INDEX_CM
 };
 
-// ---- コンテナの構築 / 解析 (新フォーマット 'ARC1') ----
+// ---- コンテナの構築 / 解析 (フォーマット 'ARC4') ----
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files) {
     std::vector<uint8_t> out;
     out.insert(out.end(), ARCHIVE_MAGIC, ARCHIVE_MAGIC + 4);
@@ -149,6 +174,9 @@ static const char* AlgoName(uint8_t algo) {
         case ALGO_CM:     return "CM";
         case ALGO_BCJ_CM: return "BCJ+CM";
         case ALGO_WAV_CM: return "WAV+CM";
+        case ALGO_WAV_CM_LEGACY: return "WAV+CM(leg)";
+        case ALGO_YUUKI_CM: return "YuukiIndex+CM";
+        case ALGO_INDEX_CM: return "IndexBMP+CM";
         case ALGO_BMP_CM:  return "BMP+CM";
         case ALGO_BMP_CM2: return "BMP+CM(sep)";
         case ALGO_STORE:  return "Store";

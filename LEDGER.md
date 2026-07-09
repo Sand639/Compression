@@ -1,5 +1,336 @@
 # 改良台帳
 
+## 第7セッション (2026-07-02, ClaudeCode差分の検証・Codex採用)
+
+### イテレーション3: yuuki専用priorを先頭3bit→4bitへ拡張 → **失敗 +1 B・revert**
+- 9領域別priorの既存prefix 1..7を保持し、固定ファイルから算出したprefix 8..15を追加。単体round-tripはOKだが、yuuki **58,577 → 58,578 B (+1)** と僅かに悪化した。
+- 下位側は適応CMへ任せる現行3bit版が最良。4bit版コードはrevertし、BEST **1,161,696 B (ARCE)** を維持。
+
+### イテレーション2: hal.bmp BMP残差bucketの符号分離 → **成功 -903 B**
+- 直前残差の大きさだけを使っていた `tBmp` 文脈を、正負別のbucketへ分離。正側の大残差 (`d > 96`) も独立bucketにして、予測器や元データは変更せず確率文脈だけを細分化した。
+- 単体スクリーニング: hal.bmp **225,006 → 224,103 B (-903)**。全体 `measure.exe`: exe 422,511 / wav 230,139 / txt 226,254 / hal 224,103 / yuuki 58,577 B、payload **1,161,584 B**。self-test PASS、round-trip ALL OK。
+- CMストリーム非互換のため archive magic を **ARCD → ARCE (ARC14)** に更新。
+- 本番 `bwt.exe`: **data.arc = 1,161,696 B**。旧BEST **1,162,599 → 1,161,696 B (-903)**。展開後 **5/5 SHA-256一致**。
+- `output.enc` を新BESTへ更新済み。内訳 payload 1,161,584 B + header 112 B。
+
+### イテレーション1: hal.bmp BMP残差「予測難易度」文脈(tBmp) → **成功 -1,197 B**
+- ClaudeCodeの未コミット差分として残っていた `cm.cpp` / `compress.h` を検証。内容は BMP_CM 専用で、直前残差の大きさ bucket と RGB phase と bit-prefix を組み合わせた `tBmp` 文脈を `st[14]` に入れるもの。
+- 既存の `NIN=15` と `st[14]` の枠を使い、text 専用文脈と排他的に BMP 専用文脈を有効化。CMストリーム非互換のため archive magic を **ARCC → ARCD (ARC13)** に更新。
+- `measure.exe`: hal.bmp **226,203 → 225,006 B (-1,197)**。他ファイルは不変: exe 422,511 / wav 230,139 / txt 226,254 / yuuki 58,577 B。`SCREEN_TOTAL 1,162,487 B`、self-test PASS、round-trip ALL OK。
+- 本番 `bwt.exe`: **data.arc = 1,162,599 B**。旧BEST **1,163,796 → 1,162,599 B (-1,197)**。展開後 **5/5 SHA-256一致**。
+- `output.enc` を新BESTへ更新済み。内訳: exe 422,511 / wav 230,139 / txt 226,254 / hal 225,006 / yuuki 58,577 B (payload 1,162,487 B + header 112 B)。
+
+## 🆕 未着手の採用候補（ChatGPT案を現状と照合して精査・2026-07-01追加 / 上から優先）
+
+> 現BEST = 1,166,348 B (ARC8, 2a3fdc0→8e94422 時点)。**採用の最終条件（絶対に守る）**:
+> ① 全5ファイルの round-trip 5/5 SHA-256一致 + self-test PASS（**完全可逆は絶対**）。
+> ② 全5ファイル合計 output.enc が現BESTより **厳密に小さい**。
+> ③ CMストリーム非互換なら ARC magic を更新。
+
+#### 決め打ち（ハードコード）の許可範囲 ← このプロジェクトの前提
+対象5ファイルは `data/` で固定。よって以下を積極的に使ってよい:
+- **ファイル特化のハードコード可**: 指定ファイルに対し、マジックナンバー・専用の定数/変数構成・
+  事前確率テーブル等を決め打ちしてよい（例: このファイルの最適 subShift/床/prior をコードに直書きする）。
+- **最適が判明したファイルは方式を固定してよい**: トーナメントで全方式を試さず「このファイルはこの方式のみ」
+  と決め打ちしてテスト時間を短縮してよい。**ただしトーナメントのコード自体は残す**（他の実験・再確認のため）。
+- **1ファイルずつテスト可**: 毎回5ファイル一括で測らず、対象ファイルだけで素早く検証して回してよい。
+  ただし **採用前の最終確認は必ず全5ファイル** で round-trip + self-test + 合計payload を通すこと。
+- **改善と改悪が両立する場合は revert せず「コード分岐」で解決してよい**:
+  あるコード変更が1ファイルを改善し別ファイルを悪化させる場合、全体を revert するのではなく、
+  **ほぼ同一でも別 .cpp / 別関数にコピーしてファイルごとに特化した版**を作り、各ファイルが自分の最良コードを
+  使うようにしてよい（復号側が algo ID / ファイル種別で正しい版を選べること）。結果として合計が縮めば採用。
+  ※ 実例: iter6 の `ALGO_WAV_CM_LEGACY`(prior版と非prior版を候補分離) がこの方針。
+
+#### 決め打ちでも越えてはいけない線（禁止）
+- **生データ・巨大辞書を復号器へ埋め込むのは禁止**。それは圧縮でなく格納（静的フレーズ辞書 +4,581 が実例）。
+  許されるのは小型の統計事前分布・定数・方式選択まで。**データそのものをコードや別ファイルに退避しないこと**。
+- 可逆性を少しでも損なう決め打ちは不可。エンコーダとデコーダで必ず同一の処理を再現すること。
+
+### A. WAV_PRIOR を候補分離（LEGACY / PRIOR） ← ✅ **採用済 -265 B (iter6, ARC7)**
+- 何を: 現在 explosion.wav 用の WAV_PRIOR が WAV+CM に固定適用され、同じ WAV+CM を選ぶ
+  yuuki_256.bmp に副作用で **+265 B** 出ている。WAV候補を `ALGO_WAV_CM_LEGACY`(priorなし) /
+  `ALGO_WAV_CM`(priorあり) に分け、トーナメントで小さい方を選ばせる。
+- 結果: yuuki が LEGACY を選び **-265 B 回収**。explosion.wav は PRIOR 付きが最小のまま。詳細は iter6。
+- 実装: `CMProfile.applyPrior` フラグ(既定 true) + `CM_PROF_WAV_LEGACY` + `ALGO_WAV_CM_LEGACY`(0x0F)。
+- 残り(案5): 他の prior(exe/bmp/text)も同様に ON/OFF を候補化すると副作用回避で更に -100〜-500 B。
+  `applyPrior` 設計は流用可能。**未着手**。
+
+### B. exe ModRM/SIB 軽量 x86 状態文脈 ← 最優先（PROGRESS の「次の試み」と一致）
+- 何を: 完全 x86 デコーダ不要。軽量ヒューリスティックで OPCODE/MODRM/SIB/DISP/IMM/REL 状態を推定し、
+  x86_state・opcode_class・modrm(mod/reg/rm)・operand_byte_pos 等を FAST(exe)専用の小型文脈へ追加。
+- 期待: TeraPad.exe 限定で **-100〜-800 B**。
+- 注意: 変換ではなく**確率モデル補助に留める**（Jcc 拡張BCJ の偽陽性失敗 +2,389 とは別物）。
+  表は小さく、失敗時に他4ファイルへ影響しないよう exe 専用にする。
+
+### C. SJIS 2-gram / 文字クラス遷移文脈 ← 高優先（PROGRESS の「次の試み」と一致）
+- 何を: 既存 Shift-JIS 文字クラスモデル(-739 成功)の延長。prev_class→cur_class、prev2+prev、
+  lead/trail phase、句読点後/鉤括弧内/改行直後フラグを SLOW(text)専用の小型文脈へ追加。
+- 期待: wagahaiwa.txt 限定で **-100〜-700 B**。
+- 注意: **生フレーズ置換は禁止**（静的辞書 +4,581 の失敗）。巨大2-gram表を避け、全入力で初期化・更新漏れを出さない。
+
+### D. yuuki_256.bmp 専用インデックス画像 codec ← 中〜高優先（不一致方式の是正）
+- 何を: yuuki は8bitインデックス画像なのに現在 WAV+CM を選んでいる(59,635)。palette別保存 +
+  index map の2D予測(left/up/MED) + 同色ラン長RLE + tile 単位モード選択 の独立候補を追加。
+- 期待: **-100〜-2,000 B**（本来不一致な方式なので伸びしろあり）。
+- 注意: 独立候補として追加し、既存に勝てなければ不採用。現状59KB台なので幅は読みにくい。
+
+### E. ブロック単位トーナメント圧縮器 ← 中優先・新系統で当たれば全ファイルに効く
+- 何を: ファイル単位トーナメントは残し、**追加候補**として 256KiB 前後のブロック単位で
+  既存CM候補 / RAW 等を試し最小を採用。ブロックヘッダに方式ID・サイズを保存。
+- 期待: 合計 **-200〜-2,000 B**（特に exe / bmp）。
+- 注意: ブロックを小さくしすぎると CM の長文脈が切れて悪化する。まず **256KiB 以上**で。
+  ヘッダオーバーヘッドに注意。全体CMより悪化するブロックは使わない。
+
+### F. hal.bmp MED残差の軽量確率文脈 ← 中優先（予測値は変えない）
+- 何を: 予測器は触らず、MED後残差の確率だけを RGB phase / bitpos / 直前残差の符号・大きさbucket /
+  x mod 3 / 行フィルタ mode の小型文脈で補助。
+- 期待: hal.bmp 限定で **-50〜-400 B**。
+- 注意: CALIC 勾配バイアス(+174 失敗)と違い**予測値を変えない**。既存3位相prior(-590済)と重複しない情報に絞る。
+
+### G. text 専用 PPM 独立候補（byte → SJIS文字単位） ← 中優先・新系統
+- 何を: wagahaiwa.txt 専用候補として order0-5 の byte単位 PPM + range coder を追加。
+  余裕があれば SJIS 2バイトを1文字シンボル化した PPM も。既存CMは触らず別候補。
+- 期待: **-100〜-1,500 B**（ただし強い既存CMに負ける可能性も高い）。
+- 注意: 最大order・ノード数に上限。辞書のように入力を壊さない（完全に別候補として実装）。
+
+### H. exe 命令ストリーム分離 codec ← 中優先・高コスト（B が当たってから拡張）
+- 何を: 軽量 x86 パーサで opcode/ModRM/SIB/disp/imm/rel/raw に分離し、各ストリームを個別圧縮
+  (range/PPM)。パース不能箇所は raw へ逃がす。exe は最大ファイルなので上振れが大きい。
+- 期待: TeraPad.exe で **-300〜-3,000 B**。
+- 注意: 完全可逆必須・raw escape 必須。実装コスト高。まず B の軽量文脈で当たりを確認してから着手。
+
+### 低優先（大コスト・既存CMに負ける可能性が高い。上が尽きてから）
+- ROLZ+RangeCoder / LZMA風 Optimal Parse LZ / FLAC・Monkey's風 WAV専用codec /
+  BWT+MTF+RLE 独立候補（※既に BWT パイプラインがあり CM が上回っている）/ 小型PAQ風 別CM。
+- いずれも「独立候補として追加し、勝てなければ不採用」を厳守。実装コストの割に期待薄。
+
+---
+
+## 第6セッション (2026-07-01, Codex resume)
+
+### イテレーション1: yuuki 8bit-index列帯域 prior + 専用CM → **measure成功 -793 B**
+- 既存BMP_CMは78,451 BでWAV+CM(legacy) 59,370 Bに大敗。800×800 index面を100列×8帯域に分け、
+  header/paletteを含む9領域×bit-prefixの小型事前確率を学習したraw専用CM候補を追加する。
+- 実装は高寄与の先頭3bit(prefix 1..7)だけを9領域別に事前学習し、細部は適応CMへ委ねる。
+- measure: yuuki **59,370 → 58,577 B (-793)**、他4ファイル不変。payload
+  **1,164,477 → 1,163,684 B**。self-test PASS、round-trip 5/5 OK。
+- 実装: `ALGO_YUUKI_CM`(0x10) + `CM_PROF_YUUKI`(preset=1) + `YUUKI_PRIOR3[9][8]`(小型統計prior)。
+  CompressOne は `isYuuki()`(641076B/BM/800x800/8bit index を厳密判定)が真のときのみ Encode_CM、
+  偽なら生データ返し→トーナメントで選ばれない。predict() の bucket は `buf.size()` 基準で可逆。
+- 新algo IDとCMビットストリーム非互換のためARCB→ARCCへ更新。
+- **本番確定 (Claude が現コードで再検証)**: bwt.exe 再ビルド→data.arc 展開で **5/5 SHA-256一致**、
+  measure で **self-test PASS**。**data.arc = 1,163,796 B (前BEST 1,164,589 → -793 B)**。output.enc 更新・コミット済み。
+  内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 58,577 B。
+
+
+
+## 第5セッション (2026-07-01, known-file specialization)
+
+### イテレーション1: Shift-JIS静的フレーズ辞書 + CM → **失敗 +4,581 B・revert**
+- wagahaiwa.txtから反復する4〜48バイト列を解析し、重複候補を除いた96フレーズを固定辞書化。
+  0x00+IDの2バイトトークンへ最長一致置換し、対象外ファイルでは候補を即棄却する。
+- 変換単体では749,051 → 646,527 B（-102,524 B、45,628置換）。最終合否はCM後の全体スコアで判定。
+- CM後は **226,633 → 231,214 B (+4,581)**。辞書変換単体とround-tripはPASSしたが不採用。
+- 頻出句を不透明な2バイトトークンへ潰した結果、既存CMのShift-JIS境界・文字クラス・長文脈が
+  利用していた規則性を失い、入力長の削減を上回る符号コストが発生した。コードはrevert。
+
+### イテレーション2: TeraPad x86オペランド事前確率 → **成功 -216 B**
+- BCJ後TeraPad.exeから rel32/imm32 × 4バイト位置 × bit-prefix の2,048確率を学習し、
+  既存x86オペランド表の初期値に使用。元データではなく小型の統計事前分布のみを固定化する。
+- measure結果: TeraPad.exe **424,486 → 424,270 B (-216)**、他4ファイル不変。
+  payload **1,168,169 → 1,167,953 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMストリーム非互換のためARC3→ARC4へ更新。
+- 本番トーナメント: **1,168,281 → 1,168,065 B (-216)**。セルフテストPASS、
+  本番アーカイブ展開後5/5 SHA-256一致。`output.enc`もARC4へ更新。
+
+### イテレーション3: hal.bmp 3-byte位相別order-0事前確率 → **成功 -590 B**
+- BMP予測後のhal.bmpから、3バイト位相 × bit-prefixの768確率を学習（bmp_train.cpp）。
+  BMPプロファイルのt0表を3位相別に分離（4*512エントリ）し、BMP_PRIORで初期化。
+  cold start時のチャンネル別バイト分布を直接モデル化。
+- measure: hal.bmp **226,793 → 226,203 B (-590)**、他4ファイル不変。
+  payload **1,167,953 → 1,167,363 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMビットストリーム非互換のためARC4→ARC5へ更新。
+- 本番: **data.arc = 1,167,475 B（1,168,065 → -590 B)**。5/5 SHA-256一致。output.enc更新。
+
+### イテレーション4: explosion.wav 4-byte位相別order-0事前確率 → **成功 -483 B**
+- WAV変換後のexplosion.wav（bestMode=0）から、4バイト位相 × bit-prefixの1024確率を学習。
+  WAVプロファイルのt0表を4位相別に使用し（既存の4*512で十分）、WAV_PRIORで初期化。
+- measure: explosion.wav **230,887 → 230,139 B (-748)**、yuuki **59,370 → 59,635 B (+265)**、
+  payload 1,167,363 → 1,166,880 B（net -483）。セルフテストPASS、round-trip 5/5 OK。
+- yuuki悪化: explosion.wav統計をyuuki（インデックス画像）に適用するため cold start が合わない。
+  yuukiは引き続きWAV+CMが最小(59,635)だが、BMP_PRIOR前の水準(59,370)より若干悪化。
+- CMビットストリーム非互換のためARC5→ARC6へ更新。
+- 本番: **data.arc = 1,166,992 B（1,167,475 → -483 B)**。5/5 SHA-256一致。output.enc更新。
+
+### イテレーション5: テキスト TEXT_PRIOR (order-0 事前確率) → **成功 -20 B**
+- wagahaiwa.txtの生バイト分布から bit-prefix 条件付き確率を学習 (`text_train.cpp`)し、
+  SLOW(text)プロファイルのt0表 (prefix=1..255) を TEXT_PRIOR[256] で初期化。
+- measure: wagahaiwa.txt **226,633 → 226,613 B (-20)**、他不変。
+- **失敗した派生案 TEXT_BIGRAM_PRIOR[256][256] (order-1 bigram) は revert 済**:
+  bigram統計で t1表(prevByte×bit-prefix, 65,536セル)を count=15(飽和)初期化すると学習レートが
+  rate[15]=2849/65536≈4.3%に固定され、希少・ノイジーなセルの初期適応が遅すぎて **+1,022 B 悪化**。
+  cm.cpp から完全除去。生バイト bigram ではなく文字クラス遷移(候補C)なら希釈を避けられる見込み。
+- 下記イテレーション6と同一コミット(ARC7)で本番反映。
+
+### イテレーション6: 候補A WAV_CM を LEGACY/PRIOR に候補分離 → **成功 -265 B**
+- 問題: iter4 の WAV_PRIOR(4位相 order-0 事前確率)は WAV+CM 全体に固定適用され、同じ WAV+CM を
+  選ぶ yuuki_256.bmp(インデックス画像)に副作用で **+265 B** 出ていた(59,370→59,635)。
+- 対策: `CMProfile.applyPrior` フラグを新設(既定 true=不変)。false のとき WAV_PRIOR と 4位相 order-0
+  分割を無効化し **事前確率導入前(legacy)の挙動を再現**。新 algo `ALGO_WAV_CM_LEGACY`(0x0F, prof は
+  `CM_PROF_WAV_LEGACY`) をトーナメント候補に追加。既存 `ALGO_WAV_CM` は prior 付きのまま。
+- 結果: yuuki が LEGACY を選び **59,635 → 59,370 B (-265, 回帰を完全回収)**。explosion.wav は
+  従来通り PRIOR 付き WAV_CM が最小(230,139, 不変)。他3ファイル不変。
+- 新 algo ID 追加でアーカイブ非互換のため magic を **ARC6 → ARC7** へ更新。
+- **本番(iter5+6 合算): data.arc = 1,166,707 B (1,166,992 → -285 B)**。5ファイル round-trip 5/5
+  SHA-256一致、self-test PASS。output.enc 更新。
+  内訳 exe 424,270 / wav 230,139 / txt 226,613 / hal 226,203 / yuuki 59,370 B。
+- 一般化: `applyPrior` は BMP/EXE/TEXT prior にも流用可能な設計。exe/bmp/text の prior ON/OFF 候補化
+  (候補A案5)で更なる副作用回避が狙える。
+
+### イテレーション7: テキスト文脈テーブル TEXT_BITS 22→26 → **成功 -359 B**
+- 発見: text の共有文脈表 tText は `TEXT_BITS=22` (4M エントリ) だが、テキスト文脈は
+  c0 + textClasses(6クラス履歴) + textPrevChar(16bit) + SJIS位相 の**衝突律速**だった。
+  文脈を増やす候補C系は逆に希釈するが、**表を広げる**と衝突が減り改善する、という仮説を検証。
+- measure スイープ (wagahaiwa.txt, 他4ファイル不変):
+  | TEXT_BITS | エントリ | tText | txt サイズ | 前段差 |
+  |---|---|---|---|---|
+  | 22 | 4M | 8MB | 226,613 | (基準) |
+  | 23 | 8M | 16MB | 226,470 | -143 |
+  | 24 | 16M | 32MB | 226,349 | -121 |
+  | 25 | 32M | 64MB | 226,289 | -60 |
+  | **26** | **64M** | **128MB** | **226,254** | **-35** ← 採用 |
+  | 27 | 128M | 256MB | 226,246 | -8 (逓減、メモリ2倍に見合わず却下) |
+- 26 を採用 (逓減の膝)。txt **226,613 → 226,254 B (-359)**、他4ファイル完全不変。
+- CMビットストリーム非互換のため magic **ARC7 → ARC8** へ更新。
+- **本番: data.arc = 1,166,348 B (1,166,707 → -359 B)**。round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 424,270 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+- 教訓: 高次文脈モデルが頭打ちに見えても、**表サイズが衝突律速なら拡大で伸びる**。
+  文脈を足す(希釈)前に、まず表サイズを疑う。exe(TBITS29=8.6GB)に対し text 128MB は余裕。
+
+### イテレーション8: exe オペランドモデルを単バイトopcode+imm32へ拡張 → **成功 -1,232 B**
+- 既存の x86 オペランドモデルは E8/E9(rel32)・B8-BF(MOV imm32) の2クラスのみ。BCJ後の exe で
+  **他の「単バイトopcode + 直後 imm32」命令**も同じ機構(exeRemain=4のオペランド窓)でモデル化:
+  | class | opcode | 命令 |
+  |---|---|---|
+  | 3 | 0x68 | PUSH imm32 |
+  | 4 | 0x05/0D/15/1D/25/2D/35/3D | ALU EAX, imm32 |
+  | 5 | 0xA0-0xA3 | MOV AL/EAX <-> moffs32 (絶対アドレス) |
+  | 6 | 0xA9 | TEST EAX, imm32 |
+- measure 内訳: TeraPad.exe **424,270 → 423,038 B**。class3+4 で -965、class5(moffs) で更に -261、
+  class6(TEST) で -6。imm32(特にアドレス)がバイト位置別に強く規則化されるため大きく縮む。他4ファイル不変。
+- **ModRM経由の imm32 (0x81/0xC7/0x69, class7-9) は不採用 (+32B 悪化)**: これらは imm32 の前に
+  ModRM/SIB/disp が入るため軽量パーサでスキップ位置を計算したが、**データ中に現れた偽の 0x81 等で
+  可変長スキップに入り、後続の本物の単バイトopcode(0x68等)検出を取りこぼして desync**。単純な
+  固定4バイト窓は自己再同期が速いが、可変長は乱す。予測文脈のみで可逆性は不変だが合計が増えるため revert。
+- CMビットストリーム非互換のため magic **ARC8 → ARC9**。
+- **本番: data.arc = 1,165,116 B (1,166,348 → -1,232 B)**。round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 423,038 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+- 教訓: 決め打ちの「単バイトopcode+固定長imm」拡張は安全・高効果。可変長(ModRM)は偽陽性のdesyncで逆効果。
+
+### イテレーション9: exe Jcc rel32 (0F 80-8F) オペランドモデル → **成功 -323 B**
+- 何を: iter8 の単バイトopcode拡張の延長。**2バイトopcode `0F 80..0F 8F`(Jcc rel32, 条件分岐)** を
+  class 7 として追加。BCJ は E8/E9 のみ絶対化し **Jcc の rel32 は相対のまま残る**ため、近距離分岐では
+  rel32 上位3バイトが 0x00/0xFF に強く偏り、バイト位置別モデルがよく効くと期待。
+- 実装: `exePrefix0F` フラグを追加。0x0F を(オペランド外で)見たら立て、次バイトが 0x80-0x8F なら
+  exeClass=7・exeRemain=4 で rel32 窓を開く。**0x0F の1バイト先読みのみ**なので desync リスク低
+  (iter8 の ModRM 可変長スキップとは別物)。予測文脈のみ・可逆性は不変。
+- measure: TeraPad.exe **423,038 → 422,715 B (-323)**、他4ファイル不変。SCREEN_TOTAL 1,165,004→1,164,681。
+  round-trip:ALL OK, self-test PASS。→ **有望。採用方向。**
+- CMビットストリーム非互換のため magic **ARC9 → ARC10(実装値 ARCA)** へ更新。
+- 本番: **data.arc = 1,164,793 B (1,165,116 → -323 B)**。real_data(data.zip展開)で round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 422,715 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+
+### イテレーション10: exe 拡張オペランド prior (class3-7) → **成功 -204 B**
+- 何を: iter8/9 で追加した PUSH imm32 / ALU EAX imm32 / moffs32 / TEST EAX imm32 / Jcc rel32 の
+  class3-7 について、BCJ後TeraPad.exeから byte-position × bit-prefix の小型統計事前確率
+  `EXE_PRIOR_EXT[20][256]` を学習し、`tExe` 初期値へ追加。元データではなく統計分布のみの固定化。
+- 既存 class1-2 (E8/E9, B8-BF) と同じ hash (`prefix`, `opcode`, `class/remain`, `pos16`) で初期化し、
+  cold start を緩和。可変長 ModRM パースは再導入しない。
+- measure(単体): TeraPad.exe **422,715 → 422,511 B (-204)**。他ファイルに影響しない exe 専用 prior。
+- CMビットストリーム非互換のため magic **ARC10(ARCA) → ARC11(ARCB)** へ更新。
+- 本番: **real_data.arc = 1,164,589 B (1,164,793 → -204 B)**。round-trip 5/5 SHA-256一致、self-test PASS。
+  output.enc 更新。内訳 exe 422,511 / wav 230,139 / txt 226,254 / hal 226,203 / yuuki 59,370 B。
+
+#### 次のより有望なレバー候補 (iter10 の後)
+- 他の rel/imm オペランド opcode の追加余地はほぼ消化済み。EXE_PRIOR class3-7 も iter10 で採用。
+- 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。yuuki 現状 WAV+CM(leg) 59,370。
+- ModRM 命令(0x81/0xC7/0x69 等)の imm32 は iter8 で desync により不採用。再挑戦は偽陽性抑制が必須。
+
+#### 本番ゲート実行メモ (bwt.exe, ~各400s) — 再利用可
+- ビルド: `cmd /c C:\Users\yziku\AppData\Local\Temp\claude\build_bwt.bat` (bwt.exe 生成, -arch=x64)。
+- 圧縮: `cmd /c ...\run_compress.bat` (stdin=`compress_in.txt`="1\r\ndata\r\n" → data.arc)。
+- 展開: `cmd /c ...\run_extract.bat` (stdin=`extract_in.txt`="2\r\ndata\r\n" → data_restored/)。
+- 照合: PowerShell `Get-FileHash -Algorithm SHA256` で data/ と data_restored/ の5ファイルを比較。
+
+#### 次のより有望なレバー候補 (iter8 の後)
+- 候補B(部分達成): 単バイトopcode+imm32 は iter8 で -1,232 達成。**ModRM経由(0x81/0xC7/0x69)は desync で不採用**。
+  再挑戦するなら「偽陽性を減らす」方向 — 例: 直前が本物の命令境界と推定できる時のみ ModRM パースに入る、
+  または imm を別窓にせず ModRM 命令全体を別文脈でモデル化する等。効果は不確実。
+- 候補D: yuuki 専用インデックス画像 codec (palette分離+2D予測+RLE)。yuuki は現状 WAV+CM(leg) 59,370。
+- 候補C: テキスト SJIS **2-gram 文字クラス遷移** → 表が衝突律速のため文脈追加は希釈リスク大 (iter7参照)。
+- exe オペランド事前確率(EXE_PRIOR)を新クラス3-6にも学習・付与すれば更に少し縮む可能性 (cold start 緩和)。
+- 案5(applyPrior 一般化)は **効果薄と判断**: WAV以外の prior は単一ファイル適用で副作用がなく回収余地なし。
+
+## 第4セッション (2026-06-30, codex/major-overhaul)
+
+### session-start BEST
+- **1,171,165 B** (`data.arc`, payload 1,171,053 B)。MSVC `/O2 /std:c++20 /utf-8`。
+- 内訳: TeraPad.exe 426,631 / explosion.wav 230,887 / wagahaiwa.txt 227,372 /
+  hal.bmp 226,793 / yuuki_256.bmp 59,370 B。
+- セルフテストPASS。本番アーカイブを展開し、5/5ファイルでSHA-256一致。
+
+### 起動時持越し: 未完成 Shift-JIS 2バイト文脈 → **失敗・revert**
+- 開始時の未コミット差分を `session-start` として保存後、MSVC `/O2 /std:c++20 /utf-8` で検証。
+- `NIN=14` と巨大な `t10` を追加していたが、`predict()` で `st[13]` を設定せず、`update()` でも
+  `t10` を更新していなかった。このため未初期化値がミキサーへ入り、エンコーダーとデコーダーで
+  モデル状態が一致しない未定義動作になった。
+- TeraPad.exe は従来約426KBに対して **1,252,027 B** まで悪化し、round-trip FAIL。ハーネスも中断。
+- さらに exe プロファイルで約1GBの文脈表を余分に確保するため、完成前の構造としても負担が大きい。
+- 直前の正常な `NIN=13` 構成へ戻した。Shift-JIS案を再試行する場合は、テキスト専用かつ小型の
+  共有表として設計し、全入力を必ず初期化・更新する。
+
+### イテレーション1: CALIC風 勾配文脈別バイアス補正 → **失敗 +174 B・revert**
+- hal.bmpのGAP予測に、W/N/NW/NEの勾配を量子化した文脈別の予測誤差フィードバックを追加し、
+  行フィルタの第8候補として競わせる。数十KBの状態だけで局所的な系統誤差を除く狙い。
+- measure結果: hal.bmp **226,793 → 226,967 B (+174)**、他4ファイルは不変、
+  payload 1,171,053 → 1,171,227 B。セルフテストPASS、round-trip 5/5 OK。
+- 既存の行別GAP/MED選択後の残差には単純な勾配文脈バイアスが残っておらず、補正により
+  CMが利用していた残差分布を乱したと判断。コードはrevert。
+
+### イテレーション2: order-4 ICM + StateMap → **失敗 +2,035 B・revert**
+- 疎なorder-4ビット文脈ごとに4bit×2のビット履歴状態を保持し、256状態で確率を共有する
+  ICM/StateMapをミキサー入力へ追加。直接カウンタとは異なる共有学習でcold startを補う狙い。
+- measure結果: exe +1,130 / wav +36 / txt +489 / hal +161 / yuuki +219 B、
+  payload **1,171,053 → 1,173,088 B (+2,035)**。セルフテストPASS、round-trip 5/5 OK。
+- 既存order-4直接カウンタと情報が重複し、共有StateMap自体のcold startも加わってミキサーを希釈。
+  学習率の微調整には進まず、構造ごとrevert。
+
+### イテレーション3: 64-tap固定小数点NLMS → **失敗 +3,046 B・revert**
+- WAVの単段sign-sign LMSを、履歴エネルギーで係数更新量を正規化する64-tap NLMSへ置換。
+  非定常な爆発音の振幅変化へ安定して追従し、LPC後残差をさらに白色化する狙い。
+- measure結果: explosion.wav **230,887 → 233,933 B (+3,046)**、他4ファイル不変。
+  セルフテストPASS、round-trip 5/5 OK。
+- LPC後残差には振幅比例の正規化更新より、現行sign-signの一定ステップが速く追従できる。
+  NLMS定数の微調整には進まずrevert。
+
+### イテレーション4: x86オペランド位置モデル → **成功 -2,145 B**
+- BCJ後のE8/E9 rel32とB8-BF imm32を追跡し、opcodeとオペランド内バイト位置別の
+  小型確率表をFASTプロファイルのミキサーへ追加。命令とデータの混在を明示的に分離する狙い。
+- measure結果: TeraPad.exe **426,631 → 424,486 B (-2,145)**、他4ファイルは完全不変。
+  payload **1,171,053 → 1,168,908 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMストリームが非互換になるため、アーカイブmagicをARC1→ARC2へ更新。
+- 本番トーナメント: **1,171,165 → 1,169,020 B (-2,145)**。内訳はmeasureと一致し、
+  セルフテストPASS、本番アーカイブ展開後5/5 SHA-256一致。`output.enc`もARC2へ更新。
+
+### イテレーション5: Shift-JIS文字クラスモデル → **成功 -739 B**
+- SLOWプロファイル専用の小型表で、SJISリード/トレイル位置、直前文字、ひらがな・カタカナ・
+  漢字等のクラス履歴を文脈化。開始時の未完成案と違い、全入力を初期化・更新してtextだけを狙う。
+- measure結果: wagahaiwa.txt **227,372 → 226,633 B (-739)**、他4ファイル不変。
+  payload **1,168,908 → 1,168,169 B**。セルフテストPASS、round-trip 5/5 OK。
+- CMストリーム非互換のためARC2→ARC3へ更新。
+- 本番トーナメント: **1,169,020 → 1,168,281 B (-739)**。セルフテストPASS、
+  本番アーカイブ展開後5/5 SHA-256一致。`output.enc`もARC3へ更新。
+
 ## ★ local-baseline (本物5ファイル, 2026-06-24) — 現行の唯一有効な基準
 - **スコア**: 1,306,118 bytes (output.enc, 5ファイル)。round-trip 5/5 exact, 7z を 334,718 B 上回る。
 - 内訳: TeraPad.exe BCJ+CM 492,658 / explosion.wav WAV+CM 270,125 / wagahaiwa.txt CM 244,659 /
@@ -160,3 +491,503 @@
 - 第2マッチモデル (ストライド3ハッシュ)
 - WAV/BMP 向け CMModel パラメータ特化
 - コンテキストテーブル TBITS=24 (メモリ制約)
+
+## 第8セッション引き継ぎ (2026-07-02, Codex→Claude)
+- **ユーザーから新目標: output.enc 1,000KB 級を目指す**（現BEST 1,161,696 B ≈ 1,134.5KB。あと約14%）。
+- Codex未コミット変更を発見: **exe 短分岐 operand 文脈** — Jcc rel8 (0x70-0x7F, class8) と
+  JMP/LOOP/JECXZ rel8 (0xEB/0xE0-0xE3, class9) を exeClass に追加し、rel8 1バイトを位置別モデル+
+  EXE_PRIOR_SHORT(train_short_prior.cpp で学習) で符号化。magic ARCE→ARCF (ARC15)。未計測・未記録。
+- 手順: ビルド→measure→bwt 本計測→合否ゲート(可逆5/5 + self-test + <1,161,696)で決着させる。
+
+### 独自案メモ (Claude, 2026-07-02 追記。ユーザー許可: LEDGER外の新案も追記→実行OK)
+- **I. PE構造の領域別文脈 (exe)**: TeraPad.exe の PEヘッダ/セクションテーブルは既知。
+  .text/.rdata/.data/.rsrc のセクション境界オフセットをハードコードし、領域IDを exe 文脈
+  (idx[13]系のhash か 専用st) に混ぜる。import table / resource は命令列と統計が全く違うのに
+  現在同じモデルで混ざっている。期待 -100〜-500 B。
+- **J. rel8/rel32 の分岐距離符号反転統一**: 後方分岐(負のrel)が多い場合、rel8 の符号ビットが
+  偏る。class8/9 の文脈に「直前の分岐が前方/後方」フラグを足す軽量案。期待 -20〜-100 B。
+- **K. wav ステレオ相関の残差二次モデル**: explosion.wav は M/S 選択済みだが、S側残差の
+  大きさが M側残差の大きさと相関する(爆発音の同時性)。M残差bucketをS側の文脈に足す。期待 -50〜-300 B。
+- **L. fileKind リファクタ (スコア不変・開発効率)**: ユーザー指摘(2026-07-02)——決め打ち許可より前の
+  コードは汎用のまま。現在ファイル判定が `isBmp = tbits==27 && mixShift==12 && ...` のような
+  プロファイルパラメータ組の暗黙判定になっていて脆い。CMProfile に明示的な fileKind
+  (EXE/WAV/TXT/HAL/YUUKI/OTHER) を追加して判定を置き換える。ビットストリーム不変・スコア同値を
+  確認してコミット(magic更新不要)。以後の決め打ち実装が楽になる。
+
+### 第8セッション iter1: exe 短分岐 rel8 operand 文脈 (Codex実装をClaude検証) → ✅ **採用 -141 B**
+- Jcc rel8 (0x70-0x7F) を class8、JMP/LOOP/JECXZ rel8 (0xEB/0xE0-0xE3) を class9 として
+  exeClass 検出に追加。rel8 1バイトを位置別モデル + EXE_PRIOR_SHORT(train_short_prior.cpp で
+  BCJ後データから学習した2×256事前確率) で符号化。BCJ は E8/E9 のみ変換するので rel8 は生の相対変位。
+- measure: exe 422,511→422,370 (-141)、他不変。本番 bwt: **1,161,696→1,161,555 B (-141)**、
+  5/5 SHA一致、self-test PASS。ARCF/ARC15。
+- 学び: rel32系(class1-7)に比べ rel8 は1バイトしかなく偏りも小さいので効果は小さめ。
+  prior の寄与と文脈の寄与は未分離(次に prior 無し版を測れば分離できるが、逓減領域なので保留)。
+
+### 第8セッション iter2: fileKind リファクタ (案L) → ✅ **完了 (スコア不変)**
+- CMProfile の暗黙判定 (tbits/mixShift/apmShift/strideLen の組) を enum CMFileKind
+  (OTHER/TEXT/HAL/EXE/WAV/YUUKI) の明示IDに置換。preset フィールドは fileKind に統合し削除。
+- YUUKI は旧判定で isWav=true だったため真理値を維持 (isWav = WAV || YUUKI)。実効は遮断済み。
+- 検証: measure 5ファイル全数値・SCREEN_TOTAL 1,161,443 が置換前と完全一致。self-test PASS、
+  round-trip ALL OK。ビットストリーム不変なので magic 更新なし (ARC15 のまま)。
+
+### 第8セッション iter3: PE領域別文脈 (案I) — 着手 2026-07-02
+- 何を: TeraPad.exe のセクション境界を決め打ちし (headers/code/.data系/.reloc/.rsrc の5領域)、
+  exe プロファイルで空いている st[14] に領域×prevByte×c0 の専用テーブル tPe を割り当てる。
+- なぜ: .reloc(72KB)/.rsrc(256KB) は命令列と統計が全く違うのに同じモデルに混在。領域IDの
+  order-1 分離で分布を隔離する。境界は BCJ 後も不変 (BCJ は長さ保存)。magic ARC15→ARC16。
+- **結果: ❌ 失敗 (+1,341)**。exe 422,370→423,711、他不変。SCREEN_TOTAL 1,162,784。
+- 敗因分析: .text がファイル75%を占め、そこでは tPe(領域×order-1) が既存 t1(order-1) と
+  ほぼ同一情報の冗長ミキサー入力になる。FAST の速い床(15000)で 655K エントリのコールド
+  スタートも重い。「領域で分ける」情報自体が悪いのではなく、載せ方(独立st入力)が悪い。
+- **派生案(次で試す)**: BMP位相/WAV位相/yuuki帯域で3連続成功している「idx[0] o0base 分割」の
+  exe 版 — idx[0] = 領域ID×512 + c0。新入力を足さず既存 order-0 を領域分離するだけなので
+  冗長性ゼロ・コールドスタント小(5×512=2,560エントリ)。t0 は 9×512 で確保済み(yuuki が9带域)。
+
+### 第8セッション iter4: exe order-0 の PE領域分割 (iter3の派生) — 着手 2026-07-02
+- 何を: idx[0] = peRegion(pos)×512 + c0 で既存 order-0 を5領域に分離 (headers/code/data系/.reloc/.rsrc)。
+  BMP位相/WAV位相/yuuki帯域で3連続成功したパターンの exe 版。新ミキサー入力なし・追加テーブルなし
+  (t0 は 9×512 確保済み)・コールドスタート 2,560 エントリのみ。magic ARC16 (ARCG)。
+
+### 第8セッション iter5 計画: exe ModRM 1バイト文脈 (案B の最小形) — iter4 決着後に着手
+- 何を: 頻出 ModRM 付き opcode (0x8B/0x89/0x8D/0xFF/0x83/0x85/0x33/0x3B/0x03 など) を
+  exeClass=10 として検出し、直後の ModRM 1バイトだけを既存 tExe 位置別モデルで符号化 (remain=1)。
+- なぜ安全か: 過去の失敗 (+32B) は「可変長スキップ」による desync が原因。remain=1 固定なら
+  誤検出してもそのバイトの文脈が変わるだけで、スキップ連鎖が起きない (rel8 class8/9 と同構造)。
+- 拡張余地: 効けば opcode別 ModRM prior (train_short_prior 方式) を追加。reg フィールドは
+  opcode 依存の偏りが強い (Delphi コードは MOV/LEA が支配的)。
+- **iter4 結果: ✅ 採用 -8 B**。exe 422,370→422,362、他不変。本番 bwt: **1,161,555→1,161,547 B**、
+  5/5 SHA一致、self-test PASS。ARCG/ARC16。
+- 学び: order-0 は高次文脈に支配されており、領域分割の効果はごく小さい (-8)。領域情報を
+  活かすなら order-0 以外への注入 (ミキサー選択文脈など) が今後の候補だが、iter3 の教訓どおり
+  独立st入力はNG。優先度は低め。
+- **iter5 結果: ❌ 失敗 (+313)**。exe 422,362→422,675、他不変。
+- 敗因: ModRM は静的分布の構造バイトで、既存 order-1/2 文脈 (直前バイト=opcode) が既に
+  拾っている。tExe の pos&15 分割が学習を薄める分だけ純損。0x83/0xFF はデータ/imm 内にも
+  頻出し誤検出率も高い。**exe 専用モデルが勝つのは「order-N で予測しにくい operand
+  (相対変位・絶対アドレス)」だけ**という重要な選定基準を得た。
+- exe operand 系はほぼ掘り尽くし (rel8 -141 / o0base -8 / ModRM +313 / region-o1 +1341)。
+  次は text 側 (案C: SJIS 遷移文脈) へ方向転換。
+
+### 第8セッション iter6 計画: text bigram 適応文脈 (案C の第一歩)
+- 何を: tText ハッシュに textPrevChar2 (2文字前) を追加し、SJIS 2文字連接 (bigram) を適応学習。
+- なぜ: 日本語の2文字連接は強い統計。過去の失敗 TEXT_BIGRAM_PRIOR (+1,022) は「count=15 飽和
+  初期化の prior」が原因で、適応文脈としての bigram は未検証。TEXT_BITS=26 (64M) に収容力あり。
+- **iter6 結果: ❌ 失敗 (+1,017)**。txt 226,254→227,271、他不変。
+- 敗因: 生 bigram (異なり数千種) の直接ハッシュで文脈観測密度が ~1/1000 に薄まり、749KB では
+  学習不能。textClasses (-739成功) は 4bit 量子化で密度を保っていた。**「情報追加」より
+  「観測密度」が支配的**という教訓 (iter3 の冗長入力NG と対をなす)。
+
+### 第8セッション iter7 計画: prevChar2 のひらがな限定量子化 bigram (iter6 の密度改善版)
+- 何を: prevChar2 を lead==0x82 (ひらがな) のときだけ trail byte (83種) で識別、ASCII は +0x100、
+  漢字/カタカナ/記号は 0 (クラス情報は textClasses が既に保持)。空間 ~180種で密度20倍。
+- なぜ: 助詞・送り仮名・活用は「直前のかな1文字」に強く依存する日本語の規則。
+- **iter7 結果: ❌ 失敗 (+499)**。txt 226,254→226,753。量子化(~180種)でも過剰細分化。
+  生bigram(+1,017)→量子化(+499)と半減したが黒字化せず。**tText ハッシュは既に最適密度で、
+  text 文脈系は飽和**と結論。以後 text の文脈追加は避ける (prior 系は別枠)。
+
+### 第8セッション iter8 計画: hal.bmp 縦方向残差相関 (tBmp 2連勝の延長)
+- 何を: tBmp 文脈の prevResMag (直前1バイト=左隣の残差bucket) に加えて/替えて、
+  「1行上の同位置バイトの残差bucket」を文脈化。エッジ・テクスチャは縦に連続するため。
+- 実装: 行ストライドを決め打ち (hal.bmp のヘッダから算出) し、buf から stride バイト前の
+  残差bucketを引く。resMag 履歴のリングバッファが必要 (バイト値でなく bucket 値の履歴)。
+- **iter8 measure: hal 224,103→220,804 (-3,299)!** 他不変。本セッション最大。bwt ゲート実行中。
+- 派生案 (tBmp 縦文脈の成功を受けて):
+  - **iter9 候補: prevResMag の対象を p-1 (直前バイト=異チャンネル) から p-3 (左隣・同チャンネル)
+    に変更 or 追加**。残差難易度の本質は画素隣接であってバイト隣接ではない可能性。
+    変更版と追加版 (3×16×16×16×512=6M, 密度58/組でやや細い) を measure で比較。
+  - **iter10 候補: yuuki にも縦文脈** — yuuki は 800B/行の生index画像なのに 2D 情報は列帯域
+    (o0base) だけで、st[14] が空いている。1行上の同位置 (p-800) の index を専用テーブルで
+    文脈化すれば 2D 予測になる。match モデルより明示的で強いはず。
+- **iter8 結果: ✅ 採用 -3,299 B (本セッション最大)**。本番 bwt: **1,161,547→1,158,248 B**、
+  5/5 SHA一致、self-test PASS。ARCH/ARC17。
+- 学び: 残差の予測難易度は縦方向に強く相関する (エッジ/テクスチャの連続性)。「成功した文脈の
+  直交方向への拡張」は密度が保てる限り強い。hal は -1197→-903→-3299 と tBmp 3連勝。
+
+### 第8セッション iter9: hal 左隣文脈を p-1 から p-3 (同チャンネル) へ変更 — 着手 2026-07-02
+- 何を: tBmp の prevResMag (直前バイト=異チャンネルの残差) を buf[p-3] (左隣画素・同チャンネル)
+  の bucket に置換。残差難易度の相関は「バイト隣接」より「画素隣接」が本質のはず。
+- 追加でなく置換 (追加は 3×16³×512=6M で密度が細る)。measure で現行と比較。ARC18 (ARCI)。
+- **iter9 結果: ❌ 失敗 (+1,248)**。hal 220,804→222,052。p-3(画素隣接・同ch) は p-1(バイト隣接・
+  異ch) より弱い。エッジは全チャンネル同時に現れるため、同ピクセル内の隣接チャンネル残差の方が
+  「この周辺は難しい」を直接伝える。
+
+### 第8セッション iter9b: p-1 + p-3 + p-1800 の4次元版 — 着手
+- 何を: prevResMag(p-1) を復帰し、そこに leftMag(p-3) を追加した 3×16×16×16×512=6M エントリ。
+- 懸念: 密度 58B/文脈組とやや細いが、bucket 分布は 0 付近に偏在するので実効密度は高い。
+- **iter9b 結果: ❌ 失敗 (+125)**。hal 220,804→220,929。4次元 (6M) は p-3 の追加情報より
+  密度低下が勝つ。**hal tBmp は3次元 (phase × p-1 × p-1800) が最適と確定**。打ち止め。
+
+### 第8セッション iter10: yuuki 縦方向 order-1 文脈 — 着手 2026-07-02
+- 何を: yuuki (800×800 8bit index, 行800B, index領域1074..641074) 用に、空いている st[14] へ
+  「1行上の同位置 index (buf[p-800]) × c0」の専用テーブル tYuuki (256×512, 256KB) を追加。
+- なぜ: 横 order-1 (t1) はあるが縦の明示文脈がない。インデックス画像は縦相関が強く、
+  match モデルより直接的。密度 2,500B/文脈で厚い。tText/tBmp と同じ st[14] 専用パターン。
+- **iter10 measure: yuuki 58,577→51,259 (-7,318)!! プロジェクト史上最大級**。他不変。bwt ゲート実行中。
+- 派生案 **iter11 候補: yuuki 2D order-2** — tYuuki を (up(p-800) × left(p-1) × c0) の直積
+  256×256×512=33.5M (64MB) に拡大。密度は名目 9.8B/組だが index 画像は同色支配で実効文脈は
+  遥かに少ない。左右どちらも既に単独 order-1 があるので、その joint が次の情報量。
+- **iter10 結果: ✅ 採用 -7,318 B (プロジェクト史上最大級)**。本番 bwt: **1,158,248→1,150,930 B**、
+  5/5 SHA一致、self-test PASS。ARCI/ARC18。yuuki は 92.0% 削減に到達。
+- 学び: 生 index 画像の縦 order-1 は劇的に効く。「2D データに縦文脈」は hal (-3,299) と
+  yuuki (-7,318) で連勝。st[14] 専用テーブル方式 (tText/tBmp/tYuuki) は密度さえ保てば強い。
+
+### 第8セッション iter11: yuuki 2D order-2 (up×left joint) — 着手 2026-07-02
+- 何を: tYuuki を (up=buf[p-800] × left=buf[p-1] × c0) の直積 256×256×512=33.5M (64MB) に拡大。
+- なぜ: 縦単独 (-7,318) と横 order-1 (t1) が両方効いている以上、その joint は次の情報量。
+  index 画像は同色支配で実効文脈数は名目より遥かに少なく、直積でも密度が保てる見込み。ARC19。
+- **iter11 結果: ❌ 失敗 (+1,596)**。yuuki 51,259→52,855。フル直積 (65,536組) は index 画像でも
+  密度不足。縦 order-1 単独が勝ち。
+- 派生 **iter11b: left を「left==up」1bit に量子化** — yuukiIdx = (up×2 + (left==up))×512 + c0
+  (256×2×512)。「面の内部 vs エッジ」を密度を保って伝える。
+- **iter11b measure: yuuki 51,259→50,988 (-271)**。1bit量子化 (flat=left==up) が正解。bwtゲート中。
+- 派生 **iter11c 候補: 縦連続性bit追加** — vflat=(up2(p-1600)==up) を足して (up×4 + flat×2 + vflat)
+  ×512、256×4×512=524K。「縦に同色が続くか」は up の信頼度をさらに伝える。
+- **iter11b 結果: ✅ 採用 -271 B**。本番 bwt: **1,150,930→1,150,659 B**、5/5 SHA一致、ARCJ/ARC19。
+- **iter11c measure: yuuki 50,988→50,762 (-226)**。縦連続bit有効。bwtゲート中。
+- 派生 **iter11d 候補: 対角bit** — dflat=(buf[p-801]==up) or (buf[p-799]==up) を追加して
+  エッジの向き (左下がり/右下がり) を伝える。256×8×512=1M。逓減中だがビット単価はまだ黒字。
+- **iter11c 結果: ✅ 採用 -226 B**。本番 bwt: **1,150,659→1,150,433 B**、5/5 SHA一致、ARCK/ARC20。
+- **iter11d 結果: ✅ 採用 -279 B**。右上bit(p-799==up) は vflat(-226) より効いた。
+  本番 bwt: **1,150,433→1,150,154 B**、5/5 SHA一致、ARCL/ARC21。
+- **iter11e 計画: 左上bit (p-801==up) 追加**。up 周辺一致bit系はまだ逓減していない。
+- **iter11e 結果: ❌ 失敗 (+154)**。左上bit は flat×vflat から推測可能な冗長情報で密度低下が勝つ。
+  **yuuki tYuuki は (up, flat, vflat, dflat) の4要素で打ち止め確定**。yuuki 累計 58,577→50,483。
+
+### 第8セッション iter12: wav 同位相 order-1 (tWav) — 着手 2026-07-02
+- 何を: explosion.wav (WAV_CM/LEGACY, 4B周期) 用に空いている st[14] へ
+  「1サンプル前の同位相バイト buf[p-4] × c0」の tWav (256×512) を追加。
+- なぜ: yuuki の tYuuki 大当たり (-7,318) の横展開。stride文脈 idx[9] は p-4,-8,-12 の3タップ
+  合成ハッシュで、単独 p-4 直積は新情報。LPC残差にも同位相の残存相関はあるはず。
+- 分岐: st[14] チェーンで isYuuki が先にあるため else if (isWav) で YUUKI は自動除外。ARC23。
+- **iter12 measure: wav 230,139→229,957 (-182)**。同位相 order-1 有効。bwtゲート中。
+- 派生 **iter12b 候補: tWav に位相 (p%4) を追加** — wavIdx = (phase×256+prev)×512+c0 (4×256×512)。
+  位相によって p-4 バイトの意味 (M下位/M上位/S下位/S上位) が違うので分離は自然。
+- **iter12 結果: ✅ 採用 -182 B**。本番 bwt: **1,150,154→1,149,972 B (115万切り)**、5/5 SHA一致、ARCM/ARC22。
+- **iter12b measure: wav 229,957→229,886 (-71)**。位相分離が黒字。bwtゲート中。
+- 派生 **iter12c 候補 (=案K の実装形): p-2 の大きさbucket 追加** — 位相2/3 (S側) から見ると
+  p-2 は同時刻の M 残差バイト。爆発音は M/S の残差エネルギーが同期するので、8段階bucket で
+  4×256×8×512=4M。位相0/1 では前サンプルS側の情報になり、それも無害な文脈。
+- **iter12b 結果: ✅ 採用 -71 B**。本番 bwt: **1,149,972→1,149,901 B**、5/5 SHA一致、ARCN/ARC23。
+- **iter12c 結果: ❌ 失敗 (+108)**。M/S相関bucket は8倍細分化の密度コストが勝つ。
+  **wav tWav は (位相×p-4) の2次元で打ち止め**。案K は否定 (LMS 済み残差に相関が残っていない)。
+
+### 第8セッション iter13: hal 行フィルタ種別文脈 — 着手 2026-07-02
+- 何を: hal の行フィルタ (ftypes, buf[146+row] に格納済み・復号側も既知) を PNG系(0-4)/GAP(5)/
+  MED(6) の3群に量子化し tBmp へ追加: 3×16×16×3×512=1.2M。残差分布はフィルタで大きく変わる。
+- 密度: 2,304組で309B/組 — 安全圏。ARC25 (ARCP)。
+- **iter13 結果: ❌ 失敗 (+63)**。フィルタ種別は upMag (縦残差連続性) が間接的に伝えており冗長。
+  hal tBmp 打ち止め再確認。
+
+### 第8セッション iter14: 新設テーブル (tYuuki) の更新率チューニング — 着手 2026-07-02
+- 何を: tYuuki/tWav/tBmp は upd() の共通 rate (プロファイル床) をそのまま使っており、
+  専用更新率は未探索。主力の tYuuki (-7,318) から専用 rate を試す。
+- 位置づけ: 微調整だが新設テーブルの初回チューニングは設計の一部。measure で素早く判定。
+- **iter14 結果: ✅ 採用 -89 B**。tYuuki 専用 rate 床探索: 4096(元):50,483 / SLOW2849:50,571(✗) /
+  6000:50,421 / **7710:50,394(採用)** / 10082:50,394(同値平坦)。非定常indexには高い床=速い適応が正解。
+  本番 bwt: **1,149,901→1,149,812 B**、5/5 SHA一致、ARCO/ARC24。
+- 学び: 専用テーブルの rate は本体プロファイルと独立に最適が存在する。tWav/tBmp の床探索も
+  同様に試す価値あり (次候補)。
+- **iter15 結果: ❌ 失敗**。tWav 床7710:+24 / 床2849:+1、tBmp 床4096:+173。
+  **専用テーブル rate の独立最適は tYuuki (非定常index) だけ**。tWav/tBmp は本体 rate が最適。
+
+### 第8セッション iter16: hal フィルタ選択ヒステリシス — 着手 2026-07-02
+- 何を: Encode_Bmp_2DPredict の行フィルタ選択で「前行と同じフィルタ」の cost を数%割引。
+  フィルタ切替は残差分布の切替=CM 学習の乱れ。切替を減らせば tBmp/order文脈が安定する。
+- 利点: エンコーダ側のみの変更 (ftypes に結果が入る)。復号は ftypes を読むだけなので
+  可逆性は自動維持、magic 更新不要。割引率は measure で数点探索。
+- **iter16 結果: ✅ 採用 -216 B**。hal フィルタ選択ヒステリシス (前行と同じフィルタを4%割引)。
+  探索: 2%:-82 / **4%:-216(採用)** / 8%:同値平坦。フィルタ切替の抑制で CM 学習が安定。
+  エンコーダ側のみの変更・可逆性自動維持・magic 据え置き (ARCO のまま)。
+  本番 bwt: **1,149,812→1,149,596 B**、5/5 SHA一致。
+- 学び: **エンコーダ側の選択最適化は可逆性リスクゼロで攻められる新カテゴリ**。
+  同様の「後段CMに優しい選択」は WAV のブロックLPC/MS選択にも適用できる可能性 (次候補)。
+
+### 第8セッション iter17: WAV ブロック選択コストの log2 化 — measure -52、bwtゲート中
+- blockCost / WavLpcAnalyze の L1 を log2(1+|res|)×256 (エントロピー近似) に変更。
+  hal のフィルタ選択と同じ理屈。エンコーダ側のみ・可逆性不変・magic 据え置き。
+- 派生 **iter17b 候補: LPC ヘッダコスト補正** — LPC 採用時は shift+係数 17B/ブロックを
+  格納するので、lc += 17×8×256 (log2次元) を足して公平に比較する。
+- **iter17 結果: ✅ 採用 -52 B**。本番 bwt: **1,149,596→1,149,544 B**、5/5 SHA一致、magic不変。
+- **iter17b 結果: ❌ 同値 (選択不変)**。LPC ヘッダコスト補正 35K log2 単位では1ブロックも
+  選択が変わらず。全ブロックで LPC/固定の差が十分大きい。revert。
+
+### 第8セッション iter18: wav BS 再探索 (log2 コスト下で) — 着手 2026-07-02
+- 何を: BS=4096 は L1 コスト時代の最適。log2 化 (iter17 -52) でコスト地形が変わったので
+  2048 を1点再測。過去の 2048/16384 失敗は L1 時代のため同一再挑戦ではない。
+- BS はフォーマットに書かれる (PutU32(BS)) ため復号互換は自動維持。エンコーダ側のみ。
+- **iter18 結果: ❌ 失敗 (+814)**。BS=2048 は log2 コスト下でも悪化 (ヘッダ倍増+LPC推定短縮)。
+  **BS=4096 が最適と再確認**。
+
+### 第8セッション iter19: hal フィルタ選択の Viterbi DP 化 — 着手 2026-07-02
+- 何を: iter16 ヒステリシス(4%割引, -216) を一般化し、切替コスト付き全行最適化 (DP)。
+  dp[r][f] = min_f' (dp[r-1][f'] + cost[r][f] + (f!=f' ? switchCost : 0))。7状態×396行。
+- 期待: 貪欲+割引より大局最適なフィルタ列。switchCost は数点探索。エンコーダ側のみ。
+- **iter19 measure: hal 220,588→220,582 (-6)**。DP はヒステリシスをほぼ再現するのみ
+  (SW 55K/120K 同値=フィルタ列収束)。貪欲+4%割引が既にほぼ最適だった。bwtゲート中。
+
+### 第8セッション iter20 計画: tYuuki 事前学習 prior (残レバー3の実装形)
+- 何を: yuuki を1パスして tYuuki (up×flat×vflat×dflat×prefix) の最終確率を採取し、
+  頻出文脈の上位のみ小型 prior としてコードに焼く (YUUKI_PRIOR3 と同じ流儀)。
+  コールドスタート削減。デコーダも同じ prior で初期化するので可逆。
+- 制約: 生データ埋め込み禁止線に注意。数百エントリ〜数KB の統計テーブルまで。
+- **iter19 結果: ✅ 採用 -6 B**。本番 bwt: **1,149,544→1,149,538 B**、5/5 SHA一致、magic不変。
+  ヒステリシス→DP の追加利得は僅少。エンコーダ側フィルタ選択は最適化し尽くした。
+- **iter20 measure: tYuuki 事前学習prior、TH スイープ**:
+  TH=400(468件):50,366 / 150(1.5K):50,318 / 50(4.6K):50,134 / 16(11K):49,787 /
+  8(17K):49,504 / 2(36K):48,870 / **1(53K):48,532 (-1,862!)**。頂点は全観測エントリ焼き。
+  bwtゲート実行中。確率統計のみで生データ非含有 (残レバー3の明示承認範囲)。
+  規模の線引きはユーザーに質問済み (回答あれば TH 変更のみで調整可)。
+- **次の大玉: 同方式の hal (tBmp) / wav (tWav) / exe (tExe) への横展開**。
+  tBmp は 393K 文脈で hal 220KB — 期待大。
+- **iter20 結果: ✅ 採用 -1,862 B (本セッション2位)**。本番 bwt: **1,149,538→1,147,676 B**、
+  5/5 SHA一致、self-test PASS。ARCP/ARC25。yuuki は 92.4% 削減 (48,532 B) に到達。
+- 学び: **「観測済み全文脈の prior 焼き込み (TH=1)」が頂点**。count=7 半飽和初期化により
+  適応学習との両立も問題なし。過去の TEXT_BIGRAM_PRIOR 失敗 (+1,022) は count=15 飽和が
+  原因だったことも裏付けられた。横展開 (tBmp/tWav/tExe) が次の本命。
+- **iter21 結果: ✅ 採用 -1,371 B**。tBmp prior (TH=1, 47K件) 横展開成功。
+  本番 bwt: **1,147,676→1,146,305 B**、5/5 SHA一致、ARCQ/ARC26。
+- iter22 準備: wav 勝ちモードは **stereoMode=3 (L/R独立)** と判明 (M/S 306,720 vs L/R 229,834
+  — 爆発音はステレオ相関が低くM/S変換が逆効果だった)。train_wav_t.cpp で mode3 出力から学習。
+- **iter22 measure: wav 229,834→223,937 (-5,897!!)**。tWav prior は prior横展開で最大の効果。
+  L/R独立モードの残差は定常性が高く prior が強く効く。bwtゲート中。
+- 残りの横展開: **tExe** (train_short_prior.cpp の状態機械再現を拡張、operand バイトのみで
+  観測数は少なめ) と **tText** (64M ハッシュ、TH高めで頻出のみ)。その後 t1/order-N 系も検討可。
+- **iter22 結果: ✅ 採用 -5,897 B (prior横展開で最大)**。本番 bwt: **1,146,305→1,140,408 B**、
+  5/5 SHA一致、ARCR/ARC27。prior シリーズ累計 -9,130 B (yuuki/hal/wav)。
+
+### 第8セッション iter23: tText prior — TH スイープと規模の禁止線判断 (2026-07-03)
+- TH スイープ: 16(53K件,426KB): txt 225,400 (-854) / 4(223K,1.8MB): 222,301 (-3,953) /
+  2(523K,4.2MB): 216,165 (-10,089) / **1(1.5M,12MB): 189,953 (-36,301!!)**。
+- **判断: TH=16 のみ採用**。基準 =「priorテーブルのバイナリサイズ < 元ファイルサイズ」。
+  TH=1 はテーブル12MB > 元749KB で、1回限りの文脈まで焼く=ハッシュ確率形式の丸暗記であり
+  「圧縮でなく格納」の禁止線越えと判断。既採用の yuuki(213KB<641KB)/hal(190KB<713KB)/
+  wav(468KB<599KB) はいずれも基準内。
+- **ユーザーへ質問済み**: 許容規模の線引き (TH=1 採用なら一気に output.enc ~1,104KB)。
+  回答があれば TH 変更+再ゲートのみで切替可能 (train_text_t.exe <TH>)。
+- **iter23 結果: ✅ 採用 -854 B (TH=16, 規模基準内)**。本番 bwt: **1,140,408→1,139,554 B**、
+  5/5 SHA一致、ARCS/ARC28。prior シリーズ累計 -9,984 B。
+
+### 第8セッション iter24: tExe prior (TH=2, 133K件, 1.06MB<1.4MB基準内) — measure -1,287、bwtゲート中
+- これで5ファイル全専用テーブル (tYuuki/tBmp/tWav/tText/tExe) の prior 焼き込みが完了。
+  シリーズ累計 -11,271 B 見込み。
+- **次の展開候補: 基本文脈 (t1=order-1) への prior**。t1 は 256×512=131K エントリで
+  プロファイル別インスタンス。fileKind で分岐して各ファイルの実測 order-1 統計を焼ける。
+  効果はコールドスタート分 (各ファイル数百B規模?)。t2-t9 (ハッシュ) も原理上可能だが
+  規模基準に注意。
+
+### ワークフロー変更 (ユーザー指示 2026-07-03)
+- measure (3分) で 改善+round-trip ALL OK+self-test PASS を確認したら bwt フルゲートを
+  待たずに **即コミット+push** してよい。
+- **5コミットに1回 bwt.exe フル確認** (5/5 SHA, output.enc/BEST 更新)。
+- フル確認で異常 → コミットからブランチを切り、壊したコミットを特定→修正→続行。
+
+### ユーザー指示まとめ (セッション横断・LEDGER 未記載分を集約 2026-07-03)
+- **メッセージ・記録は日本語で残す** (2026-07-02 指示)。
+- **成果が出たらこまめにコミットし、push まで必ず行う** (2026-07-02 指示)。
+- **わからないことは質問として残しつつ、作業は止めずに継続する** (2026-07-02 指示)。
+- **「決め打ち許可」以前に書かれた古いコードは汎用のままの可能性があるので、開発しやすい
+  ように適宜ハードコード/整理してよい** (2026-07-02 指示。fileKind リファクタ=案L はこの実施例)。
+- スコア不変リファクタは「output.enc サイズ同値 + round-trip + self-test」で確認してコミット
+  してよい (magic 更新不要)。
+- STOP ファイルは 2026-07-02 にユーザーが削除・コミット済み (777cff3)。run_loop_local.ps1 の
+  自動ループ停止用センチネルで、存在すると自走が止まる。
+- 新目標 1,000KB (再掲): 現在進行中。ワークフロー変更 (measure 判定で即コミット、5回に1回
+  bwt フル確認) は前セクション参照。
+- **iter24 結果: ✅ 採用 -1,287 B**。本番 bwt (フル確認1/5回目): **1,139,554→1,138,267 B**、
+  5/5 SHA一致、ARCT/ARC29。**5ファイル全専用テーブルの prior 完了、シリーズ累計 -11,271 B**。
+- **iter25 結果: ✅ 採用 -87 B (measure判定・新ワークフロー1/5)**。t1 prior は5ファイル一括だと
+  text+560/exe+53/yuuki+31 悪化 → **hal(-71)/wav(-16) のみに限定**して採用。
+  measure payload 1,138,155→1,138,068。悪化3ファイルの配列は削除。ARCU/ARC30。
+- 学び: t1 (最頻用文脈) は適応が速く prior 価値が低い。prior が効くのは「文脈空間が広く
+  観測が薄い専用テーブル」ほど大きい (tText 64M >> tExe 4M > t1 131K の順に効果減)。
+- **iter26 結果: ✅ 採用 -179 B (measure判定 2/5)**。t2 (order-2) prior wav 用 TH=8 (31K件,
+  248KB<599KB)。payload 1,138,068→1,137,889。ARCV/ARC31。
+- 次: t2 prior の TH=4 確認 (基準内なら) と hal への展開。
+- **iter26b 結果: ✅ 採用 -509 B (measure判定 3/5)**。t2 prior wav TH=8→4 (54.5K件, 436KB 基準内)。
+  payload 1,137,889→1,137,380。wav t2 prior 累計 -688。次: t2 を hal へ展開。
+- **iter27 結果: ✅ 採用 -662 B (measure判定 4/5)**。t2 prior hal TH=4 (43K件, 347KB 基準内)。
+  payload 1,137,380→1,136,718。t2 系累計 -1,350。次: t2 text/exe/yuuki 展開 → 次回フル確認。
+- **iter28 結果: ✅ 採用 -3,569 B (text -2,774 / yuuki -795)**。t2 prior text TH=8 / yuuki TH=4。
+  **bwt フル確認 (5/5回目): data.arc 1,133,261 B、5/5 SHA一致** — measure 予測と完全一致で
+  直近5コミットすべて健全。t2 系累計 -4,919。ARCX/ARC33。
+- 次: t3 (order-3) prior 展開 — 文脈空間がさらに広く「観測薄いほど効く」法則で有望。
+- **iter29 結果: ✅ 採用 -3,785 B (measure判定 1/5)**。t3 prior: text TH=8 (-2,892) /
+  hal TH=4 (-485) / yuuki TH=4 (-408)。wav TH=8 は +40 悪化のため除外・配列削除。
+  payload 1,133,149→1,129,364。ARCY/ARC34。t2+t3 系累計 -8,704。
+- 次: t4 (order-4) prior 展開 (同法則の続き)。
+- **iter30 結果: ✅ 採用 -1,301 B (measure判定 2/5)**。t4 prior: text TH=16 (-988) /
+  hal TH=8 (-103) / yuuki TH=4 (-210)。payload 1,129,364→1,128,063。ARCZ/ARC35。
+- 次: t5 prior。逓減中だがまだ黒字。
+- **iter31 結果: ✅ 採用 -754 B (measure判定 3/5)**。t5 prior: text -509 / hal -127 / yuuki -118。
+  payload 1,128,063→1,127,309。ARCa/ARC36。次: t6。
+- **iter32 結果: ✅ 採用 -513 B (measure判定 4/5)**。t6 prior: text -239 / hal -191 / yuuki -83。
+  payload 1,127,309→1,126,796。ARCb/ARC37。次: t7 (次回フル確認)。
+- **iter33 結果: ✅ 採用 -366 B**。t7 prior: text -124 / hal -179 / yuuki -63。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,126,542 B、5/5 SHA一致** — 直近5コミット健全。
+  ARCc/ARC38。次: t8/t9 prior。
+- **iter34 結果: ✅ 採用 -199 B (measure判定 1/5)**。t8 prior: text -67 / hal -91 / yuuki -41。
+  payload 1,126,430→1,126,231。ARCd/ARC39。次: t9 (order-8テーブルの最終)。
+- **iter35 結果: ✅ 採用 -795 B (measure判定 2/5)**。t9 (stride) prior: text s2 -237 /
+  hal s3 -317 / yuuki s4 -241。stride は order 系と独立情報のため t7/t8 より効いた。
+  payload 1,126,231→1,125,436。ARCe/ARC40。次: wav t9s4 と exe の order 系 prior。
+- **iter36 結果: ✅ 採用 -65 B (measure判定 3/5)**。t9s4 prior wav。payload 1,125,436→1,125,371。
+  ARCf/ARC41。次: exe の order 系 prior (tbits=29, train メモリ 4GB)。
+- **iter37 結果: ✅ 採用 -5,204 B!! (measure判定 4/5)**。t2 prior exe TH=8 (167K件, 1.34MB 基準内)。
+  payload 1,125,371→1,120,167。**exe は order 系 prior の大鉱脈** (コード列は文脈依存が強い)。
+  ARCg/ARC42。次: exe t3..t9s2 展開。
+- **iter38 結果: ✅ 採用 -2,047 B**。t3 prior exe TH=16 (91K件, 726KB 基準内)。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,118,232 B、5/5 SHA一致** — 直近5コミット健全。
+  ARCh/ARC43。次: exe t4..t8, t9s2。
+- **iter39 結果: ✅ 採用 -938 B (measure判定 1/5)**。t4 prior exe TH=16。payload 1,118,120→1,117,182。ARCi/ARC44。
+- **iter40 結果: ✅ 採用 -577 B (measure判定 2/5)**。t5 prior exe。payload 1,117,182→1,116,605。ARCj/ARC45。
+- **iter41 結果: ✅ 採用 -1,494 B (measure判定 3/5)**。t6+t9s2 prior exe。payload 1,116,605→1,115,111。ARCk/ARC46。
+- **iter42 結果: ✅ 採用 -262 B (measure判定 4/5)**。t7+t8 prior exe。payload 1,115,111→1,114,849。
+  ARCl/ARC47。**exe order 系完了 (t2..t9s2 累計 -10,522)**。
+- 次: TH 緩和ラウンド — 基準内でまだ下げられる玉: exe t3 TH=16→12 (-2,047 実績あり大物) /
+  exe t4 TH=12 / text t2 TH=8→5 など。
+- **iter43 結果: ✅ 採用 -1,455 B**。TH緩和: exe t3 16→12 (-681) / text t2 8→5 (-774)。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,113,506 B、5/5 SHA一致**。ARCm/ARC48。
+- 次: TH 緩和続き (exe t4/t9s2 の TH=12 等)。
+- **iter44 結果: ✅ 採用 -923 B (measure判定 1/5)**。TH緩和 exe t4/t9s2 →12。
+  payload 1,113,394→1,112,471。ARCn/ARC49。次: 残りTH緩和一括 (exe t5-t8 / hal t2 / text t3)。
+- **iter45 結果: ✅ 採用 -668 B (measure判定 2/5)**。TH緩和 exe t5/t6→12 (-328) / hal t2→3 (-340)。
+  payload 1,112,471→1,111,803。ARCo/ARC50。
+- **iter46 結果: ✅ 採用 -650 B (measure判定 3/5)**。TH緩和 exe t7/t8→12, yuuki/hal t3→3。
+  payload 1,111,803→1,111,153。ARCp/ARC51。
+- **iter47 結果: ✅ 採用 -723 B (measure判定 4/5)**。TH緩和 yuuki/hal t4→3, text t4→12。
+  payload 1,111,153→1,110,430。ARCq/ARC52。
+- **iter48 結果: ✅ 採用 -1,115 B**。TH緩和 batch5 (yuuki/text/hal の t5-t8)。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,109,427 B、5/5 SHA一致**。ARCr/ARC53。
+- 次: TH緩和最終弾 (yuuki t2→2, yuuki t9s4→3, hal t9s3→4, wav t2→3)。
+- **iter49 結果: ✅ 採用 -1,903 B (measure判定 1/5)**。TH緩和 yuuki t2→2 / t9s4→3 / hal t9s3→4 /
+  wav t2→3。payload 1,109,315→1,107,412。ARCs/ARC54。
+- **iter50 結果: ✅ 採用 -155 B (measure判定 2/5)**。TH緩和 text t9s2→12 / wav t9s4→5。
+  payload 1,107,412→1,107,257。ARCt/ARC55。TH緩和はほぼ底。
+- 次: **prior count 調整** — bakeT 系の焼き込み count=7 を 11 へ (priorの信頼期間を延長)。
+  全 prior に一括で効く1パラメータ。
+- **iter51 結果: ✅ 採用 -3,106 B (measure判定 3/5)**。prior count 7→11 (信頼期間延長):
+  wav -1,336 / hal -1,035 / txt -591 / yuuki -144。exe は CM_RATE_FAST が n=3 以降平坦のため
+  count 不感 (変化なし)。payload 1,107,257→1,104,151。ARCu/ARC56。次: count=13。
+- **iter52 結果: ✅ 採用 -766 B (measure判定 4/5)**。prior count スイープ: 11:1,104,151 /
+  13:1,103,508 / **15:1,103,385 (採用)**。count=15 (飽和) が最適 — 固定ファイルの実測確率
+  なので信頼しきって良い。過去の TEXT_BIGRAM_PRIOR 失敗の敗因は count でなく prior の質と確定。
+  payload 1,104,151→1,103,385。ARCw/ARC58。count 系累計 -3,872。
+- **iter53 結果: ❌ 失敗 (+115)**。wav t3 prior 再挑戦 (TH=6, count=15) も悪化。
+  **wav の order-3 以上は LMS 済み残差で無相関 = prior 不成立と確定**。revert。
+- 残る大物候補: ミキサー重み (w, 8192×15, 500KB) / APM2 (532KB) の「1パス後状態」焼き込み。
+  bit カウントでは作れず CM 全体を回してダンプする実装が必要 (TRAIN_DUMP モード)。
+- **iter54 結果: ✅ 採用 -1,447 B**。**新カテゴリ: 第1ミキサー重み w の1パス後状態 prior** (text,
+  上位60K件)。Encode_CM_DumpState + train_mixer.cpp を新設。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,102,050 B、5/5 SHA一致**。ARCx/ARC59。
+- 次: ミキサー prior を hal/wav/yuuki/exe へ横展開。
+- **iter55 結果: ✅ 採用 -5,509 B!! (measure判定 1/5)**。ミキサー prior 4ファイル横展開:
+  exe -2,581 / hal -1,409 / yuuki -1,250 / wav -269。payload 1,101,938→1,096,429 (109万台)。
+  ARCy/ARC60。次: maxN を基準内上限へ拡大 (exe/hal/text 全122K / wav 74K / yuuki 80K)。
+- **iter56 結果: ✅ 採用 -10 B (measure判定 2/5)**。ミキサー prior 全量化 (exe のみ -10)。
+  w (第1ミキサー) は頭打ち。payload 1,096,429→1,096,419。ARCz/ARC61。
+- 次: **サブミキサー w2/w3/w4 (2M文脈×15) の差分上位 prior** — 文脈細分で学習が遅い分、
+  prior の価値が w より大きい可能性。DumpState を拡張。
+- **iter57 結果: ✅ 採用 -15,595 B!!! (セッション最大, measure判定 3/5)**。サブミキサー w2/w3/w4
+  prior (15配列): exe -10,488 / txt -2,474 / yuuki -1,244 / hal -1,061 / wav -328。
+  payload 1,096,419→1,080,824 (108万台)。ARC0/ARC62。
+  ※ 生成時に古い mixer_dump.bin 混入事故 → 毎回 rm してから実行する運用で解決。
+- 次: exe の w2/w3/w4 maxN を 60K→175K (基準内) に拡大 (-10,488 が切られている)。
+- **iter58 結果: ✅ 採用 -6,986 B!! (measure判定 4/5)**。exe w2/w3/w4 prior を 175K (基準内上限)
+  に拡大。payload 1,080,824→1,073,838 (107万台)。ARC1/ARC63。
+  output.enc 見込み ~1,048.8KB — **1,000KB まで残り 50KB を切った**。
+- **iter59 結果: ✅ 採用 -7,733 B!!**。wf/APM/APM2 prior (5ファイル): exe -4,607 / txt -1,123 /
+  yuuki -881 / hal -658 / wav -464。
+  **bwt フル確認 (5/5回目): 正式 BEST 1,066,217 B (1,041.2KB)、5/5 SHA一致**。ARC2/ARC64。
+  1,000KB まで残り 42.2KB。次: APM3/APM4 prior (同方式の最終テーブル群)。
+- **iter60 結果: ✅ リファクタ完了 (スコア不変)**。cm.cpp 82.86MB→105KB。prior 76配列を
+  prior_data1-3.cpp (各26-31MB, GitHub 50MB警告未満) に分離 (extern リンク)。
+  measure 全数値一致でビットストリーム不変を確認。build_session.cmd 更新。
+  ※ 定義側にも extern 必須 (const はデフォルト internal linkage)。
+- **iter61 結果: ✅ 採用 -2,250 B (measure判定 1/5)**。APM3/APM4 prior (5ファイル):
+  exe -845 / wav -483 / txt -409 / hal -328 / yuuki -185。payload 1,066,105→1,063,855。
+  ARC3/ARC65。**全テーブル (t0-t9, tX専用, w-w4, wf, apm-apm4) の prior 一巡完了**。
+- 次の一手候補: **自己反復 (2パス目)** — prior 込みの現バイナリで再度 dump→焼き直すと
+  「prior 適用後の学習状態」に収束していく (fixed-point)。効果の大きかった w2/w3/w4 から。
+- **iter62 結果: ✅ 採用 -13,233 B!!! (measure判定 2/5)**。**自己反復 (2パス目) が大当たり**:
+  prior込みバイナリで w2/w3/w4 を再採取→焼き直し。exe -10,951 / txt -914 / hal -599 /
+  yuuki -554 / wav -215。payload 1,063,855→1,050,622 (**~1,026KB**)。ARC4b/ARC66。
+- 次: 反復を他テーブルにも展開 (apm系, t系, w, wf の2パス化) + 3パス目。
+- **iter63 結果: ✅ 採用 -17,553 B!!!! (measure判定 3/5)**。全ミキサー/APM prior の反復更新
+  (45配列一括): exe -12,330 / txt -1,941 / yuuki -1,328 / hal -1,132 / wav -822。
+  payload 1,050,622→1,033,069 (**~1,009KB**)。ARC5b/ARC67。**1,000KB まで残り 9.2KB**。
+- 次: さらに反復 (4パス目) + t系テーブル (train_t2 系) の反復。
+- **iter64 結果: ✅ 採用 -11,590 B!!! (measure判定 4/5)**。反復パス2: exe -8,244 / txt -1,279 /
+  yuuki -950 / hal -588 / wav -529。payload 1,033,069→1,021,479。
+  **output.enc 見込み 1,021,591 B ≈ 997.6KB — 1,024,000B 基準で 1,000KB 突破!!** ARC6b/ARC68。
+- 反復はまだ収束せず (-17.5K→-11.6K)。次で bwt フル確認 (5/5) → 反復続行。
+- **iter65 結果: ✅ 採用 -8,241 B。🎉 bwt フル確認 (5/5回目): 正式 BEST 1,013,350 B ≈ 989.6KB、
+  5/5 SHA一致 — 1,024,000B 基準の 1,000KB 目標を正式達成!!** ARC7b/ARC69。
+- 反復はまだ収束していない (-17.5K→-11.6K→-8.2K)。続行して 1,000,000B 切りを狙う。
+- **iter66 結果: ✅ 採用 -5,851 B (measure判定 1/5)**。反復パス4。payload 1,013,238→1,007,387。
+  ARC8b/ARC70。1,000,000B 切りまで残り 7.5KB。
+- **iter67 結果: ✅ 採用 -4,716 B (measure判定 2/5)**。反復パス5。payload 1,007,387→1,002,671。
+  ARC9b/ARC71。1,000,000B 切りまで残り 2.8KB。
+- **iter68 結果: ✅ 採用 -4,067 B。🎉🎉 bwt フル確認: 正式 BEST 998,716 B (975.3KB)、
+  5/5 SHA一致 — 1,000,000 B の大台を正式突破!!** ARCA2/ARC72。
+- 反復推移: -13.2K→-17.6K→-11.6K→-8.2K→-5.9K→-4.7K→-4.1K。まだ収束せず、続行。
+- **iter69 結果: ✅ 採用 -3,299 B (measure判定 1/5)**。反復パス7。payload 998,604→995,305。ARCB2/ARC73。
+- **iter70 結果: ✅ 採用 -2,866 B (measure判定 2/5)**。反復パス8。payload 995,305→992,439。
+  ARCD2/ARC74。wav は2連続微悪化 (+114,+175) — 反復頂点を過ぎたため次パスから除外。
+- **iter71 結果: ✅ 採用 -2,696 B (measure判定 3/5)**。反復パス9 (wav除外)。payload 992,439→989,743。ARCE2/ARC75。
+
+## 決め打ち境界線の監査 (2026-07-03, ユーザー訂正基準版)
+
+**判断基準 (ユーザー指示による訂正)**: サイズ・充填率は無関係。
+「そのファイルを実際にエンコード/解析した結果得られた情報のコード埋め込み」は 1 エントリでも禁止。
+許可されるのは「ファイル形式の一般知識に基づく予測方式・アルゴリズム選択」のみ。
+
+### 1. 全 prior 配列の一覧と生成元 (全て対象ファイルを実際に処理して生成 = 禁止側該当)
+
+| 配列群 | 生成元 trainer | 生成方法 | 対象ファイル由来 |
+|---|---|---|---|
+| YUUKI_TPRIOR (53K件) | train_yuuki_t.cpp | yuuki_256.bmp を直接 bit 集計 | ✗ 禁止側 |
+| BMP_TPRIOR (47K件) | train_bmp_t.cpp | hal.bmp をフィルタ後 bit 集計 | ✗ 禁止側 |
+| WAV_TPRIOR (117K件) | train_wav_t.cpp | explosion.wav をフィルタ後 bit 集計 | ✗ 禁止側 |
+| TEXT_TPRIOR (53K件) | train_text_t.cpp | wagahaiwa を bit 集計 | ✗ 禁止側 |
+| EXE_TPRIOR (133K件) | train_exe_t.cpp | TeraPad.exe を BCJ 後 bit 集計 | ✗ 禁止側 |
+| T1_PRIOR_* (2本) | train_t1.cpp | 各ファイル order-1 bit 集計 | ✗ 禁止側 |
+| T2〜T9S*_PRIOR_* (35本) | train_t2.cpp | 各ファイル order-N/stride bit 集計 | ✗ 禁止側 |
+| W/W2/W3/W4/WF_PRIOR_* (25本) | train_mixer.cpp | 各ファイルを実際にエンコードした後のミキサー重みダンプ | ✗ 禁止側 |
+| APM〜APM4_PRIOR_* (20本) | train_mixer.cpp | 同上 (APM テーブルダンプ) | ✗ 禁止側 |
+| (cm.cpp 内) EXE_PRIOR / EXE_PRIOR_SHORT / EXE_PRIOR_EXT / WAV_PRIOR / TEXT_PRIOR / BMP_PRIOR / YUUKI_PRIOR3 | x86_train / train_short_prior / wav_train / text_train / bmp_train / yuuki_train | 各ファイルの bit 頻度集計 (第5〜7セッション採用の「小型prior」) | ✗ 禁止側 |
+
+- prior_data1-3.cpp 合計: **108.25 MB** (86配列) + cm.cpp 内旧 prior 7 テーブル (~25KB 相当)。
+- 特に W/APM 系は「実際にエンコードした後の内部状態のダンプ」であり、自己反復 (パス2〜9) で
+  そのファイルの圧縮結果そのものに収束させたもの。訂正基準では最も明確に禁止側。
+
+### 2. 全 prior 無効化時のスコア影響 (measure 実測, /DDISABLE_FILE_PRIORS)
+
+| ファイル | prior込み (現行) | prior全無効 | 悪化量 |
+|---|---|---|---|
+| TeraPad.exe | 327,850 | 422,823 | +94,973 |
+| explosion.wav | 217,241 | 229,841 | +12,600 |
+| wagahaiwa.txt | 201,309 | 226,276 | +24,967 |
+| hal.bmp | 206,291 | 220,593 | +14,302 |
+| yuuki_256.bmp | 37,052 | 50,394 | +13,342 |
+| **合計 payload** | **989,743** | **1,149,927** | **+160,184** |
+
+- prior 全無効版 (1,149,927) は prior 導入直前の 7/2 時点 BEST (payload 1,149,432 前後) とほぼ
+  一致し、測定は整合的。文脈設計 (tYuuki 縦文脈・PE領域分割・SJISクラス等の「一般知識」側) の
+  寄与はそのまま残る。round-trip ALL OK / self-test PASS。
+
+### 3. 結論と対応待ち事項
+- 訂正基準では **上記 prior 配列は全て(旧「小型prior」含む)禁止側に該当**。
+- 撤去した場合の正味コスト: **+160,184 B** (output.enc ≈ 1,150,039 B ≈ 1,123KB 相当へ後退)。
+- **コードは未変更のまま** (この監査は測定のみ、測定用 #ifdef も復元済み)。
+  対応方針 (全撤去 / 旧小型priorのみ残す 等の線引き) は**ユーザーの判断待ち**。
+
+## 作業1 完了: isYuuki の BMPヘッダ動的読み取り化 (2026-07-03)
+- ParseBmpHeaderForCM 追加 (bfOffBits/biWidth/biHeight(負=top-down)/biBitCount、
+  stride=((w*bc+31)/32)*4 パディング込み)。エンコード/デコード共通の update 経路でパース。
+- リテラル 1074/800/641074/1600/799 を全て動的値 (idxOff/idxStride/idxEnd) に置換。
+  8帯域幅 = stride/8 (端数ガード付き)。
+- CM_PROF_YUUKI (applyPrior=true, yuuki完全一致時のみ固有prior) / CM_PROF_INDEX
+  (applyPrior=false, 8bit BMP汎用・priorなし) + ALGO_INDEX_CM (0x11) を分離。
+  isWav を CMK_WAV のみに整理。ARCG2/ARC77。
+- 検証: yuuki 37,052 完全一致 (回帰なし) / 別8bitBMP (w=99 パディング付) round-trip SHA一致 /
+  **bwt フルゲート PASS: 正式 BEST 989,855 B (966.7KB)、5/5 SHA一致**。

@@ -12,7 +12,7 @@
 //   filters.cpp    : Delta / BCJ / WAV / BMP 予測フィルタ
 //   pipeline.cpp   : ブロック分割 BWT パイプライン
 //   io.cpp         : ファイル / パス入出力
-//   archive.cpp    : ARC1 コンテナ + ファイル単位トーナメント圧縮 + フォルダ圧縮/復元
+//   archive.cpp    : ARC4 コンテナ + ファイル単位トーナメント圧縮 + フォルダ圧縮/復元
 //   selftest.cpp   : アルゴリズムの自己テスト
 //   main.cpp       : ドライバ (main / ダミーデータ生成 / 一致検証)
 //
@@ -90,6 +90,9 @@ static const uint8_t ALGO_BCJ_CM = 0x0B;   // BCJ(x86) -> CM (.exe 向け)
 static const uint8_t ALGO_WAV_CM = 0x0C;   // WAV(Mid/Side+LPC) 残差 -> CM (音声向け)
 static const uint8_t ALGO_BMP_CM  = 0x0D;   // BMP(2D 予測フィルタ) 残差 -> CM (画像向け)
 static const uint8_t ALGO_BMP_CM2 = 0x0E;  // BMP(2D 予測) 残差 + チャンネル分離 -> CM
+static const uint8_t ALGO_WAV_CM_LEGACY = 0x0F; // WAV 残差 -> CM (WAV_PRIOR/4位相なし。yuuki 等の副作用回避用の候補)
+static const uint8_t ALGO_YUUKI_CM = 0x10;       // 800x800 8bit index BMP 専用の列帯域prior + CM
+static const uint8_t ALGO_INDEX_CM = 0x11;       // 8bit インデックスBMP 汎用 (prior なし, ヘッダ動的読取)
 static const uint8_t ALGO_STORE  = 0xFE;   // 無圧縮で格納
 // 0x02..0x05 の stride は (algo - ALGO_LZSS) で求まる (0x02->1 ... 0x05->4)
 
@@ -101,7 +104,8 @@ struct StoredFile {
     std::vector<uint8_t> data;         // 圧縮後データ
 };
 
-static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '1'};
+// isYuuki 汎用化 (BMPヘッダ動的読取) + ALGO_INDEX_CM 追加のためARC77へ更新。
+static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', 'O'};  // ARCO = ARC85 (exe subShift 10 + WN連動テーブル)
 
 // ==========================================================================
 // CM プロファイル
@@ -111,15 +115,25 @@ static const char ARCHIVE_MAGIC[4] = {'A', 'R', 'C', '1'};
 //   strideLen: スパース文脈の刻み幅 (テキスト UTF-8 は 3、x86 exe は dword 整列の 4)。
 //   tbits: 文脈テーブル t2..t9 のサイズ指数 (1<<tbits)。
 // ==========================================================================
-struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; };
+// applyPrior=false のとき、そのプロファイル種別に対応する静的事前確率(WAV_PRIOR 等)と
+// 位相別 order-0 分割を無効化し、事前確率導入前(legacy)の挙動を再現する。既存プロファイルは
+// 既定 true なのでビットストリーム不変。
+// fileKind: ファイル種別の決め打ちID。対象5ファイルは確定しているので、プロファイル→モデル分岐を
+// パラメータ組の暗黙判定 (旧: tbits==27 && mixShift==12 && ... ) ではなく明示IDで行う。
+enum CMFileKind { CMK_OTHER = 0, CMK_TEXT = 1, CMK_HAL = 2, CMK_EXE = 3, CMK_WAV = 4, CMK_YUUKI = 5 };
+// mbits: マッチテーブルのサイズ指数。画像系のみ 26 (拡大で hal -46 / yuuki -71)。
+//   テキスト/exe は衝突による「近い出現優先」バイアスが有利で 24 のまま (26 で exe +252 / txt +169)。
+// apm2Shift: APM2 文脈 = (order-2ハッシュ >> apm2Shift)*8+bitpos。テキストのみ 19 (65536文脈, txt -40)。
+//   他は 23 (4096) が最適 (19 で exe +45 / wav +21 / hal +14)。
+struct CMProfile { const int* rate; int mixShift; int apmShift; int subShift; int strideLen; int tbits; bool applyPrior = true; int fileKind = CMK_OTHER; int mbits = 24; int apm2Shift = 23; };
 
 static const int CM_RATE_SLOW[16] = {
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      6898,  6241,  5461,  4681,  4096,  3500, 3100, 2849
 };
-static const int CM_RATE_FAST[16] = {   // exe (BCJ_CM) 用: 速い床
-    43690, 26214, 18724, 15000, 15000, 15000, 15000, 15000,
-    15000, 15000, 15000, 15000, 15000, 15000, 15000, 15000
+static const int CM_RATE_FAST[16] = {   // exe (BCJ_CM) 用: 速い床 (generic: 21000 が最適。15000:基準/18000:-347/21000:-463/24000:+240)
+    43690, 26214, 21000, 21000, 21000, 21000, 21000, 21000,
+    21000, 21000, 21000, 21000, 21000, 21000, 21000, 21000
 };
 static const int CM_RATE_WAV[16] = {    // 音声 (WAV_CM) 用: やや遅い床 (残差は exe より定常)
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
@@ -129,10 +143,17 @@ static const int CM_RATE_BMP[16] = {    // 画像 (BMP_CM) 用: 残差は定常�
     43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
      6898,  6241,  5461,  4096,  3000,  2185, 1820, 1638
 };
-static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 27 };   // テキスト (CM)
-static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 27 };   // 画像 (BMP_CM)
-static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 14, 2, 29 };   // exe (BCJ_CM)
-static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 27 };   // 音声 (WAV_CM, インターリーブ4B周期)
+static const int CM_RATE_YUUKI_T[16] = {  // tYuuki 専用: 非定常index向けにWAV(4096)より高い床
+    43690, 26214, 18724, 14563, 11915, 10082, 8738, 7710,
+     7710,  7710,  7710,  7710,  7710,  7710, 7710, 7710
+};  // 床探索: 4096:50,483 / 6000:50,421 / 7710:50,394 / 10082:50,394 (7710-10082が平坦頂点)
+static const CMProfile CM_PROF_SLOW { CM_RATE_SLOW, 11, 8, 24, 2, 29, true,  CMK_TEXT, 24, 17 };  // テキスト (CM)
+static const CMProfile CM_PROF_BMP  { CM_RATE_BMP,  12, 8, 24, 3, 29, true,  CMK_HAL, 29 };   // 画像 (BMP_CM)
+static const CMProfile CM_PROF_FAST { CM_RATE_FAST, 10, 7, 10, 2, 29, true,  CMK_EXE };   // exe (BCJ_CM, subShift 10=文脈32M。12:-18, 10:-22)
+static const CMProfile CM_PROF_WAV  { CM_RATE_WAV,  11, 7, 24, 4, 29, true,  CMK_WAV };   // 音声 (WAV_CM, インターリーブ4B周期)
+static const CMProfile CM_PROF_WAV_LEGACY { CM_RATE_WAV, 11, 7, 24, 4, 29, false, CMK_WAV };  // WAV_CM だが prior/位相なし
+static const CMProfile CM_PROF_YUUKI { CM_RATE_WAV, 11, 7, 24, 4, 29, true,  CMK_YUUKI, 29 };     // yuuki_256.bmp 完全一致時のみ (固有prior有効)
+static const CMProfile CM_PROF_INDEX { CM_RATE_WAV, 11, 7, 24, 4, 29, false, CMK_YUUKI, 29 };     // 8bit インデックスBMP 汎用 (priorなし・ゼロ初期適応)
 
 // ==========================================================================
 // 各モジュールの公開関数プロトタイプ
@@ -201,7 +222,7 @@ bool WriteFileFs(const std::filesystem::path& path, const std::vector<uint8_t>& 
 std::string PathToUtf8(const std::filesystem::path& p);
 std::filesystem::path Utf8ToPath(const std::string& s);
 
-// ---- archive.cpp (ARC1 コンテナ / ファイル単位圧縮 / フォルダ圧縮・復元) ----
+// ---- archive.cpp (ARC4 コンテナ / ファイル単位圧縮 / フォルダ圧縮・復元) ----
 std::vector<uint8_t> CompressOne(uint8_t algo, const std::vector<uint8_t>& in);
 std::vector<uint8_t> DecompressOne(uint8_t algo, const std::vector<uint8_t>& in, uint64_t originalSize);
 std::vector<uint8_t> BuildArchive(const std::vector<StoredFile>& files);

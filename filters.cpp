@@ -192,7 +192,8 @@ static long WavLpcAnalyze(const std::vector<uint16_t>& v, size_t lo, size_t hi, 
         int pred = WavLpcPredict(v.data(), i, q, shift);
         uint16_t r = static_cast<uint16_t>(v[i] - static_cast<uint16_t>(pred));
         int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
-        cost += (sv < 0) ? -sv : sv;
+        int a = (sv < 0) ? -sv : sv;
+        cost += static_cast<long>(std::log2(1.0 + a) * 256.0 + 0.5);  // blockCost と同じ log2 次元
     }
     return cost;
 }
@@ -286,7 +287,8 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
     const size_t BS = 4096;                              // フレーム/ブロック (インターリーブ後は4096が最良)
     const size_t numBlocks = (frames + BS - 1) / BS;
 
-    // [lo,hi) ブロックで order の残差絶対値和を計算 (履歴は連続 = 全域参照)
+    // [lo,hi) ブロックで order の残差 log2(1+|res|) コストを計算 (履歴は連続 = 全域参照)。
+    // L1 でなくエントロピー近似 (hal のフィルタ選択 -216 と同じ理屈。符号化後ビット数に比例)。
     auto blockCost = [&](const std::vector<uint16_t>& v, size_t lo, size_t hi, int order) {
         long c = 0;
         for (size_t i = lo; i < hi; ++i) {
@@ -294,7 +296,8 @@ std::vector<uint8_t> Encode_Wav_MidSide_Delta(const std::vector<uint8_t>& in, in
             uint16_t p3 = (i >= 3) ? v[i - 3] : 0, p4 = (i >= 4) ? v[i - 4] : 0;
             uint16_t r = static_cast<uint16_t>(v[i] - WavPredict(order, p1, p2, p3, p4));
             int sv = (r < 32768) ? r : static_cast<int>(r) - 65536;
-            c += (sv < 0) ? -sv : sv;
+            int a = (sv < 0) ? -sv : sv;
+            c += static_cast<long>(std::log2(1.0 + a) * 256.0 + 0.5);
         }
         return c;
     };
@@ -566,20 +569,24 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
     std::vector<uint8_t> ftypes(rows);
     std::vector<uint8_t> resid(rows * stride);
     const int NUM_FILT = 7;                          // 0-4: PNG, 5: GAP, 6: MED
-    std::vector<uint8_t> tmp[NUM_FILT];
-    for (int f = 0; f < NUM_FILT; ++f) tmp[f].resize(stride);
 
     // フィルタ選択コスト: L1 ではなく log2(1+|残差|) (エントロピー符号化後のビット数に近い)。
     int bitCost[256];
     for (int v = 0; v < 256; ++v) { int sv = (v < 128) ? v : v - 256; int a = sv < 0 ? -sv : sv; bitCost[v] = static_cast<int>(std::log2(1.0 + a) * 256.0 + 0.5); }
 
+    // 全行×全フィルタの残差とコストを事前計算し、切替コスト付き Viterbi DP でフィルタ列を
+    // 大局最適化する (iter16 貪欲ヒステリシス4% -216 の一般化)。フィルタ切替は残差分布の
+    // 切替であり後段 CM の学習を乱すため、切替に固定ペナルティ SW を課して最短路を選ぶ。
+    // エンコーダ側のみの変更 (結果は ftypes に載る) なので可逆性不変。
+    std::vector<uint8_t> allRes(rows * NUM_FILT * stride);
+    std::vector<long> rcost(rows * NUM_FILT);
     for (size_t r = 0; r < rows; ++r) {
         const uint8_t* row   = pix + r * stride;
         const uint8_t* prow  = (r > 0) ? pix + (r - 1) * stride : nullptr;
         const uint8_t* prow2 = (r > 1) ? pix + (r - 2) * stride : nullptr;
-        long bestCost = -1; int bestF = 0;
         for (int f = 0; f < NUM_FILT; ++f) {
             long cost = 0;
+            uint8_t* dst = &allRes[(r * NUM_FILT + f) * stride];
             for (size_t x = 0; x < stride; ++x) {
                 int pred;
                 if (f == 5) {
@@ -591,13 +598,37 @@ std::vector<uint8_t> Encode_Bmp_2DPredict(const std::vector<uint8_t>& in) {
                     pred = (f < 5) ? PngPredict(f, a, b, c) : MedPredict(a, b, c);
                 }
                 uint8_t res = static_cast<uint8_t>(row[x] - pred);
-                tmp[f][x] = res;
+                dst[x] = res;
                 cost += bitCost[res];                         // log2(1+|残差|) コスト
             }
-            if (bestCost < 0 || cost < bestCost) { bestCost = cost; bestF = f; }
+            rcost[r * NUM_FILT + f] = cost;
         }
-        ftypes[r] = static_cast<uint8_t>(bestF);
-        std::copy(tmp[bestF].begin(), tmp[bestF].end(), resid.begin() + r * stride);
+    }
+    {
+        const long SW = 55000;                       // 切替ペナルティ (log2次元; 55K/120K同値の平坦頂点)
+        std::vector<long> dp(rows * NUM_FILT);
+        std::vector<int8_t> from(rows * NUM_FILT, -1);
+        for (int f = 0; f < NUM_FILT; ++f) dp[f] = rcost[f];
+        for (size_t r = 1; r < rows; ++r) {
+            long minAll = dp[(r - 1) * NUM_FILT]; int minF = 0;
+            for (int f = 1; f < NUM_FILT; ++f)
+                if (dp[(r - 1) * NUM_FILT + f] < minAll) { minAll = dp[(r - 1) * NUM_FILT + f]; minF = f; }
+            for (int f = 0; f < NUM_FILT; ++f) {
+                long stay = dp[(r - 1) * NUM_FILT + f];
+                long sw   = minAll + SW;
+                if (stay <= sw) { dp[r * NUM_FILT + f] = stay + rcost[r * NUM_FILT + f]; from[r * NUM_FILT + f] = static_cast<int8_t>(f); }
+                else            { dp[r * NUM_FILT + f] = sw + rcost[r * NUM_FILT + f]; from[r * NUM_FILT + f] = static_cast<int8_t>(minF); }
+            }
+        }
+        int bf = 0; long bc = dp[(rows - 1) * NUM_FILT];
+        for (int f = 1; f < NUM_FILT; ++f)
+            if (dp[(rows - 1) * NUM_FILT + f] < bc) { bc = dp[(rows - 1) * NUM_FILT + f]; bf = f; }
+        for (size_t r = rows; r-- > 0; ) {
+            ftypes[r] = static_cast<uint8_t>(bf);
+            const uint8_t* src = &allRes[(r * NUM_FILT + bf) * stride];
+            std::copy(src, src + stride, resid.begin() + r * stride);
+            if (r > 0) bf = from[r * NUM_FILT + bf];
+        }
     }
     out.insert(out.end(), ftypes.begin(), ftypes.end());
     out.insert(out.end(), resid.begin(), resid.end());
